@@ -599,19 +599,22 @@ module N_ary_function = struct
 
   module Extension_node = struct
     type n_ary =
-      | End_cases
+      | Param
       | End_expression_body
+      | End_cases
       | Alloc_mode of alloc_mode
 
     let to_extension_suffix = function
+      | Param -> [ "param" ]
+      | End_expression_body -> ["end" ]
       | End_cases -> ["end"; "cases" ]
-      | End_expression_body -> [ "end"; "expression_body" ]
       | Alloc_mode Global -> [ "alloc_mode"; "global" ]
       | Alloc_mode Local -> [ "alloc_mode"; "local" ]
 
     let of_extension_suffix = function
+      | [ "param" ] -> Some Param
+      | [ "end" ] -> Some End_expression_body
       | [ "end"; "cases" ] -> Some End_cases
-      | [ "end"; "expression_body" ] -> Some End_expression_body
       | [ "alloc_mode"; "global" ] -> Some (Alloc_mode Global)
       | [ "alloc_mode"; "local" ] -> Some (Alloc_mode Local)
       | _ -> None
@@ -630,8 +633,9 @@ module N_ary_function = struct
 
   module Extension_node_with_payload = struct
     type t =
-      | End_cases of case list
+      | Param
       | End_expression_body
+      | End_cases of case list
       | Alloc_mode of alloc_mode
       | Layout_annotation of
           layout_annotation * string loc * Parsetree.expression
@@ -657,7 +661,7 @@ module N_ary_function = struct
              the n-ary function before reaching a node of this kind. The only \
              legal construct is a nested sequence of Pexp_fun and Pexp_newtype \
              nodes, optionally followed by a Pexp_coerce or Pexp_constraint \
-             node, ending in %a or %a."
+             node, followed by a node with a %a or %a attribute."
             Extension_node.format Extension_node.End_cases
             Extension_node.format Extension_node.End_expression_body
       | Missing_alloc_mode ->
@@ -677,7 +681,7 @@ module N_ary_function = struct
              be applied to Pexp_newtype."
       | Bad_syntactic_arity_embedding suffix ->
           Location.errorf ~loc
-            "Unknown syntactic-arity extension point \"%a\"."
+            "Unknown syntactic-arity extension point %a."
             Embedded_name.pp_quoted_name
             (Embedded_name.of_feature feature suffix)
 
@@ -730,7 +734,9 @@ module N_ary_function = struct
     =
     match expand_n_ary_expr expr with
     | None -> None
-    | Some (N_ary End_cases, ({ pexp_desc = Pexp_function cases } as expr)) ->
+    | Some (Param, expr) -> Some (Param, expr)
+    | Some (End_expression_body, expr) -> Some (End_expression_body, expr)
+    | Some (End_cases, ({ pexp_desc = Pexp_function cases } as expr)) ->
         Some (End_cases cases, expr)
     | Some (N_ary End_cases, expr) ->
         Desugaring_error.raise expr Misannotated_function_cases
@@ -745,16 +751,29 @@ module N_ary_function = struct
 
   let check_end expr ~rev_params ~function_constraint =
     match expand_n_ary_expr_with_payload expr with
-    | None | Some (Alloc_mode _, _) -> None
-    | Some (Layout_annotation (annotation, ty, body), _expr) ->
-        Some (`Layout_annotation (annotation, ty, body))
+    | Some (Param, _) | Some (Alloc_mode _, _) -> None
     | Some (End_cases cases, expr) ->
         let { pexp_loc = loc; pexp_attributes = attrs } = expr in
         let params = List.rev rev_params in
         Some (`End (params, function_constraint, Pfunction_cases (cases, loc, attrs)))
     | Some (End_expression_body, expr) ->
         let params = List.rev rev_params in
-        Some (`End (params, function_constraint, Pfunction_body expr))
+        Some (params, function_constraint, Pfunction_body expr)
+    | None ->
+        (* In this case, the node is not marked with any Jane Syntax attribute.
+           It may seem surprising that we don't raise an error, as it would seem
+           the AST is invalid by the invariants of the Jane Syntax library.
+           We don't raise an error because we permit ppxes to drop the final
+           [End_expression_body] attribute. Lots of existing ppxes do this in
+           the course of rewriting functions, and it's difficult to change them
+           all to not drop this attribute. Instead, we consider the absence of
+           any Jane Syntax attribute to be equivalent to [End_expression_body].
+
+           Note we'll still loudly complain if we see a *misplaced* Jane Syntax
+           attribute.
+        *)
+        let params = List.rev rev_params in
+        Some (params, function_constraint, Pfunction_body expr)
 
   let require_alloc_mode expr =
     match expand_n_ary_expr expr with
@@ -815,7 +834,13 @@ module N_ary_function = struct
                 [], None, Pfunction_cases (cases, loc, [])
               in
               Some (n_ary, attrs)
-          | _ -> Some (loop expr ~rev_params:[], expr.pexp_attributes)
+          | expanded ->
+              let unconsumed_attributes =
+                match expanded with
+                | None -> expr.pexp_attributes
+                | Some (_, { pexp_attributes }) -> pexp_attributes
+              in
+              Some (loop expr ~rev_params:[], unconsumed_attributes)
       end
       | _ -> None
 
@@ -845,16 +870,17 @@ module N_ary_function = struct
       in
       List.fold_right
         (fun param body ->
-          match param with
-          | Pparam_val (label, default, pat) ->
-              Ast_helper.Exp.fun_ label default pat body
-          | Pparam_newtype (newtype, None, loc) ->
-              Ast_helper.Exp.newtype newtype body ~loc
-          | Pparam_newtype (newtype, Some annotation, loc) ->
-              Layout.Ast_of.wrap_jane_syntax
-                layout_annotation_components
-                ~payload:(Layout_annotation.Encode.as_payload annotation)
-                (Ast_helper.Exp.newtype newtype body ~loc))
+          n_ary_function_expr Param (
+            match param with
+            | Pparam_val (label, default, pat) ->
+                Ast_helper.Exp.fun_ label default pat body
+            | Pparam_newtype (newtype, None, loc) ->
+                Ast_helper.Exp.newtype newtype body ~loc
+            | Pparam_newtype (newtype, Some annotation, loc) ->
+                Layout.Ast_of.wrap_jane_syntax
+                  layout_annotation_components
+                  ~payload:(Layout_annotation.Encode.as_payload annotation)
+                  (Ast_helper.Exp.newtype newtype body ~loc)))
         params
         constrained_body)
 end
