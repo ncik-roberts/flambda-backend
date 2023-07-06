@@ -602,8 +602,7 @@ module E = struct
     | Jexp_comprehension x -> Jexp_comprehension (map_cexp sub x)
     | Jexp_immutable_array x -> Jexp_immutable_array (map_iaexp sub x)
     | Jexp_layout x -> Jexp_layout (map_layout_exp sub x)
-    | Jexp_n_ary_function nary_exp ->
-        Jexp_n_ary_function (map_n_ary_exp sub nary_exp)
+    | Jexp_n_ary_function x -> Jexp_n_ary_function (map_n_ary_exp sub x)
 
   let map sub
         ({pexp_loc = loc; pexp_desc = desc; pexp_attributes = attrs} as exp) =
