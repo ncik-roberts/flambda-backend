@@ -350,7 +350,7 @@ end
 
 let ppat_iarray loc elts =
   Jane_syntax.Immutable_arrays.pat_of
-    ~loc:(make_loc loc) ~attrs:[]
+    ~loc:(make_loc loc)
     (Iapat_immutable_array elts)
 
 let expecting_loc (loc : Location.t) (nonterm : string) =
@@ -533,7 +533,7 @@ let mk_newtypes ~loc newtypes exp =
     match layout with
     | None -> mkexp ~loc (Pexp_newtype (name, exp))
     | Some layout ->
-      Jane_syntax.Layouts.expr_of ~loc:(make_loc loc) ~attrs:[]
+      Jane_syntax.Layouts.expr_of ~loc:(make_loc loc)
         (Lexp_newtype (name, layout, exp))
   in
   List.fold_right mk_one newtypes exp
@@ -548,7 +548,7 @@ let wrap_type_annotation ~loc newtypes core_type body =
   in
   (exp,
      Jane_syntax.Layouts.type_of
-       ~loc:(Location.ghostify (make_loc loc)) ~attrs:[] ltyp)
+       ~loc:(Location.ghostify (make_loc loc)) ltyp)
 
 let wrap_exp_attrs ~loc body (ext, attrs) =
   let ghexp = ghexp ~loc in
@@ -809,15 +809,15 @@ end = struct
     | Value const_value ->
         mkexp ~loc (Pexp_constant const_value)
     | Unboxed const_unboxed ->
-      Jane_syntax.Layouts.expr_of
-        ~loc:(make_loc loc) ~attrs:[] (Lexp_constant const_unboxed)
+      Jane_syntax.Layouts.expr_of ~loc:(make_loc loc)
+        (Lexp_constant const_unboxed)
 
   let to_pattern ~loc : t -> pattern = function
     | Value const_value ->
         mkpat ~loc (Ppat_constant const_value)
     | Unboxed const_unboxed ->
       Jane_syntax.Layouts.pat_of
-        ~loc:(make_loc loc) ~attrs:[] (Lpat_constant const_unboxed)
+        ~loc:(make_loc loc) (Lpat_constant const_unboxed)
 end
 
 type sign = Positive | Negative
@@ -1184,7 +1184,7 @@ The precedences must be listed from low to high.
     { mk_directive_arg ~loc:$sloc $1 }
 
 %inline mktyp_jane_syntax_ltyp(symb): symb
-    { Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc) ~attrs:[] $1 }
+    { Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc) $1 }
 
 /* Generic definitions */
 
@@ -2681,7 +2681,7 @@ simple_expr:
           ~loc:$sloc
           (fun ~loc elts ->
              Jane_syntax.Immutable_arrays.expr_of
-               ~loc:(make_loc loc) ~attrs:[]
+               ~loc:(make_loc loc)
                (Iaexp_immutable_array elts))
         $1
       }
@@ -2755,7 +2755,7 @@ comprehension_clause:
 
 %inline comprehension_expr:
   comprehension_ext_expr
-    { Jane_syntax.Comprehensions.expr_of ~loc:(make_loc $sloc) ~attrs:[] $1 }
+    { Jane_syntax.Comprehensions.expr_of ~loc:(make_loc $sloc) $1 }
 ;
 
 %inline array_simple(ARR_OPEN, ARR_CLOSE, contents_semi_list):
@@ -2927,7 +2927,7 @@ let_binding_body_no_punning:
         let ltyp = Jane_syntax.Layouts.Ltyp_poly { bound_vars; inner_type } in
         let typ_loc = Location.ghostify (make_loc $loc($4)) in
         let typ =
-          Jane_syntax.Layouts.type_of ~loc:typ_loc ~attrs:[] ltyp
+          Jane_syntax.Layouts.type_of ~loc:typ_loc ltyp
         in
         let pat =
           mkpat_local_if $1
@@ -3512,8 +3512,8 @@ layout_attr:
   attrs=attributes
   COLON
   layout=layout_annotation
-    { Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc) ~attrs
-        (Ltyp_var { name; layout }) }
+    { Jane_syntax.Core_type.core_type_of ~loc:(make_loc $sloc) ~attrs
+        (Jtyp_layout (Ltyp_var { name; layout })) }
 ;
 
 parenthesized_type_parameter:
@@ -3625,20 +3625,20 @@ sig_exception_declaration:
       let loc = make_loc ($startpos, $endpos(attrs2)) in
       let docs = symbol_docs $sloc in
       let ext_ctor =
-        Jane_syntax.Layouts.extension_constructor_of
+        Jane_syntax.Extension_constructor.extension_constructor_of
           ~loc ~name:id ~attrs:(attrs1 @ attrs2) ~docs
-          (Lext_decl (vars_layouts, args, res))
+          (Jext_layout (Lext_decl (vars_layouts, args, res)))
       in
       Te.mk_exception ~attrs ext_ctor, ext }
 ;
 %inline let_exception_declaration:
     mkrhs(constr_ident) generalized_constructor_arguments attributes
       { let vars_layouts, args, res = $2 in
-        Jane_syntax.Layouts.extension_constructor_of
+        Jane_syntax.Extension_constructor.extension_constructor_of
             ~loc:(make_loc $sloc)
             ~name:$1
             ~attrs:$3
-            (Lext_decl (vars_layouts, args, res)) }
+            (Jext_layout (Lext_decl (vars_layouts, args, res))) }
 ;
 
 generalized_constructor_arguments:
@@ -3731,8 +3731,9 @@ label_declaration_semi:
   d = generic_constructor_declaration(opening)
     {
       let name, vars_layouts, args, res, attrs, loc, info = d in
-      Jane_syntax.Layouts.extension_constructor_of
-        ~loc ~attrs ~info ~name (Lext_decl(vars_layouts, args, res))
+      Jane_syntax.Extension_constructor.extension_constructor_of
+        ~loc ~attrs ~info ~name
+          (Jext_layout (Lext_decl(vars_layouts, args, res)))
     }
 ;
 extension_constructor_rebind(opening):
@@ -3806,7 +3807,7 @@ possibly_poly(X):
     { $1 }
 | poly(X)
     { let bound_vars, inner_type = $1 in
-      Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc) ~attrs:[]
+      Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc)
         (Ltyp_poly { bound_vars; inner_type }) }
 ;
 %inline poly_type:
@@ -3857,7 +3858,7 @@ alias_type:
              COLON
              layout = layout_annotation
              RPAREN
-        { Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc) ~attrs:[]
+        { Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc)
               (Ltyp_alias { aliased_type; name; layout }) }
 ;
 
@@ -4003,10 +4004,10 @@ atomic_type:
   )
   { $1 } /* end mktyp group */
   | LPAREN QUOTE name=ident COLON layout=layout_annotation RPAREN
-      { Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc) ~attrs:[] @@
+      { Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc) @@
         Ltyp_var { name = Some name; layout } }
   | LPAREN UNDERSCORE COLON layout=layout_annotation RPAREN
-      { Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc) ~attrs:[] @@
+      { Jane_syntax.Layouts.type_of ~loc:(make_loc $sloc) @@
         Ltyp_var { name = None; layout } }
 
 
