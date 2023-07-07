@@ -1982,14 +1982,14 @@ and unboxed_constant _ctxt f (x : Jane_syntax.Layouts.constant)
   | Float (x, suffix) -> pp f "#%a" constant (Pconst_float (x, suffix))
   | Integer (x, suffix) -> pp f "#%a" constant (Pconst_integer (x, Some suffix))
 
-and function_param ctxt f (x : Jane_syntax.N_ary_function.function_param) =
+and function_param ctxt f (x : Jane_syntax.N_ary_functions.function_param) =
   match x with
   | Pparam_val (a, b, c) -> label_exp ctxt f (a, b, c)
   | Pparam_newtype (ty, None, _) -> pp f "(type %s)@;" ty.txt
   | Pparam_newtype (ty, Some annot, _) ->
       pp f "(type %s : %a)@;" ty.txt layout_annotation annot
 
-and function_body ctxt f (x : Jane_syntax.N_ary_function.function_body) =
+and function_body ctxt f (x : Jane_syntax.N_ary_functions.function_body) =
   match x with
   | Pfunction_body body -> expression ctxt f body
   | Pfunction_cases (cases, _, attrs) ->
@@ -1998,7 +1998,7 @@ and function_body ctxt f (x : Jane_syntax.N_ary_function.function_body) =
       (case_list ctxt) cases
 
 and function_constraint
-    ctxt f (x : Jane_syntax.N_ary_function.function_constraint)
+    ctxt f (x : Jane_syntax.N_ary_functions.function_constraint)
   =
   (* We don't currently print [x.alloc_mode]; this would need
      to go on the enclosing [let] binding.
@@ -2026,7 +2026,7 @@ and function_params_then_body ctxt f params constraint_ body ~delimiter =
 and n_ary_function_expr
       ctxt
       f
-      ((params, constraint_, body) as x : Jane_syntax.N_ary_function.expression)
+      ((params, constraint_, body) as x : Jane_syntax.N_ary_functions.expression)
   =
   if ctxt.pipe || ctxt.semi then
     paren true (n_ary_function_expr reset_ctxt) f x
