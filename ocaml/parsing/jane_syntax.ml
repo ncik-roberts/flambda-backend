@@ -870,7 +870,7 @@ module N_ary_functions = struct
       | _ -> None
 
   let n_ary_function_expr ext x =
-    let suffix = Attribute_node.of_suffix ext in
+    let suffix = Attribute_node.to_suffix ext in
     Ast_of.wrap_jane_syntax suffix x
 
   let expr_of ~loc (params, constraint_, body) =
