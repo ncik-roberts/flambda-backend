@@ -1418,6 +1418,10 @@ and pp_print_pexp_function ctxt sep f x =
   (* do not print [@extension.local] on expressions *)
   let attrs, _ = check_local_attr x.pexp_attributes in
   let x = { x with pexp_attributes = attrs } in
+  (* We go to some trouble to print nested [Pexp_newtype]/[Lexp_newtype] as
+     newtype parameters of the same "fun" (rather than printing several nested
+     "fun (type a) -> ..."). This isn't necessary for round-tripping -- it just
+     makes the pretty-printing a bit prettier. *)
   match Jane_syntax.Expression.of_ast x with
   | Some (Jexp_n_ary_function (params, c, body), []) ->
       function_params_then_body ctxt f params c body ~delimiter:"="
@@ -1433,7 +1437,7 @@ and pp_print_pexp_function ctxt sep f x =
   else
     match x.pexp_desc with
     | Pexp_newtype (str,e) ->
-        pp f "(type@ %s)@ %a" str.txt (pp_print_pexp_function ctxt sep) e
+      pp f "(type@ %s)@ %a" str.txt (pp_print_pexp_function ctxt sep) e
     | _ ->
        pp f "%s@;%a" sep (expression ctxt) x
 
