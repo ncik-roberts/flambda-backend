@@ -271,7 +271,7 @@ module Layouts : sig
   (** See also [Ast_helper.Type.constructor], which is a direct inspiration for
       the interface here. It's meant to be able to be a drop-in replacement.  *)
   val constructor_declaration_of :
-    loc:Location.t -> info:Docstrings.info -> attrs:Parsetree.attributes ->
+    loc:Location.t -> attrs:Parsetree.attributes -> info:Docstrings.info ->
     vars_layouts:(string Location.loc *
                   Asttypes.layout_annotation option) list ->
     args:Parsetree.constructor_arguments -> res:Parsetree.core_type option ->

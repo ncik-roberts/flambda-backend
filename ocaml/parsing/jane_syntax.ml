@@ -1388,7 +1388,7 @@ module Layouts = struct
 
   module Ctor_decl_of = Ast_of (Constructor_declaration) (Ext)
 
-  let constructor_declaration_of ~loc ~info ~attrs ~vars_layouts ~args
+  let constructor_declaration_of ~loc ~attrs ~info ~vars_layouts ~args
         ~res name =
     let vars, layouts = List.split vars_layouts in
     let ctor_decl =
@@ -1404,8 +1404,12 @@ module Layouts = struct
             Ctor_decl_of.wrap_jane_syntax ["vars"] ~payload ctor_decl
           end
     in
-    (* See Note [Outer attributes at end] *)
-    { ctor_decl with pcd_attributes = ctor_decl.pcd_attributes @ attrs }
+    (* Performance hack: save an allocation if [attrs] is empty. *)
+    match attrs with
+    | [] -> ctor_decl
+    | _ :: _ as attrs ->
+        (* See Note [Outer attributes at end] *)
+        { ctor_decl with pcd_attributes = ctor_decl.pcd_attributes @ attrs }
 
   let of_constructor_declaration_internal (feat : Feature.t) ctor_decl =
     match feat with
@@ -1455,8 +1459,12 @@ module Core_type = struct
       match t with
       | Jtyp_layout x -> Layouts.type_of ~loc x
     in
-    (* See Note [Outer attributes at end] *)
-    { core_type with ptyp_attributes = core_type.ptyp_attributes @ attrs }
+    (* Performance hack: save an allocation if [attrs] is empty. *)
+    match attrs with
+    | [] -> core_type
+    | _ :: _ as attrs ->
+        (* See Note [Outer attributes at end] *)
+        { core_type with ptyp_attributes = core_type.ptyp_attributes @ attrs }
 end
 
 module Constructor_argument = struct
@@ -1609,6 +1617,10 @@ module Extension_constructor = struct
       | Jext_layout lext ->
           Layouts.extension_constructor_of ~loc ~name ?info ?docs lext
     in
-    (* See Note [Outer attributes at end] *)
-    { ext_ctor with pext_attributes = ext_ctor.pext_attributes @ attrs }
+    (* Performance hack: save an allocation if [attrs] is empty. *)
+    match attrs with
+    | [] -> ext_ctor
+    | _ :: _ as attrs ->
+        (* See Note [Outer attributes at end] *)
+        { ext_ctor with pext_attributes = ext_ctor.pext_attributes @ attrs }
 end
