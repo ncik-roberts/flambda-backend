@@ -562,15 +562,6 @@ module N_ary_functions = struct
     let feature : Feature.t = Builtin
   end
 
-  module Layout = struct
-    module Ext = struct
-      let feature : Feature.t = Language_extension Layouts
-    end
-
-    module Ast_of = Ast_of (Expression) (Ext)
-    module Of_ast = Of_ast (Ext)
-  end
-
   module Ast_of = Ast_of (Expression) (Ext)
   module Of_ast = Of_ast (Ext)
   open Ext
@@ -610,57 +601,68 @@ module N_ary_functions = struct
       | Top_level
       | Fun_then of after_fun
       | Local_constraint
+      | Layout_annotation of layout_annotation
 
-    let to_suffix = function
-      | Top_level -> []
-      | Fun_then Cases -> [ "cases" ]
-      | Fun_then Constraint_then_cases -> [ "constraint"; "cases" ]
-      | Local_constraint -> [ "local_constraint" ]
+    (* We return an [of_suffix_result] from [of_suffix] rather than having
+       [of_suffix] interpret the payload for two reasons:
+         1. It's nice to keep the string production / matching extremely
+            visually simple so it's easy to check that [to_suffix_and_payload]
+            and [of_suffix] correspond.
+         2. We want to raise a [Desugaring_error.Has_payload] in the case that
+            a [No_payload t] has an improper payload, but this creates a
+            dependency cycle between [Attribute_node] and [Desugaring_error].
+            Moving the interpretation of the payload to the caller of
+            [of_suffix] breaks this cycle.
+    *)
 
-    let of_suffix = function
-      | [] -> Some Top_level
-      | [ "cases" ] -> Some (Fun_then Cases)
-      | [ "constraint"; "cases" ] -> Some (Fun_then Constraint_then_cases)
-      | [ "local_constraint" ] -> Some Local_constraint
-      | _ -> None
+    type of_suffix_result =
+      | No_payload of t
+      | Payload of (payload -> loc:Location.t -> t)
+      | Unknown_suffix
+
+    let to_suffix_and_payload = function
+      | Top_level -> [], None
+      | Fun_then Cases -> [ "cases" ], None
+      | Fun_then Constraint_then_cases -> [ "constraint"; "cases" ], None
+      | Local_constraint -> [ "local_constraint" ], None
+      | Layout_annotation layout_annotation ->
+          let payload = Layout_annotation.Encode.as_payload layout_annotation in
+          [ "layout_annotation" ], Some payload
+
+    let of_suffix suffix =
+      match suffix with
+      | [] -> No_payload Top_level
+      | [ "cases" ] -> No_payload (Fun_then Cases)
+      | [ "constraint"; "cases" ] -> No_payload (Fun_then Constraint_then_cases)
+      | [ "local_constraint" ] -> No_payload Local_constraint
+      | [ "layout_annotation" ] ->
+          Payload (fun payload ~loc ->
+              assert_extension_enabled ~loc Layouts Language_extension.Stable;
+              let layout_annotation =
+                Layout_annotation.Decode.from_payload payload ~loc
+              in
+              Layout_annotation layout_annotation)
+      | _ -> Unknown_suffix
 
     let format ppf t =
-      Embedded_name.pp_quoted_name
-        ppf
-        (Embedded_name.of_feature feature (to_suffix t))
-
-    type t =
-      | N_ary of n_ary
-      | Layout_annotation of layout_annotation
-  end
-
-  module Attribute_node_with_payload = struct
-    type t =
-      | Param of attributes (** Unconsumed attributes *)
-      | End of function_body
-      | Alloc_mode of alloc_mode
+      let suffix, _ = to_suffix_and_payload t in
+      Embedded_name.pp_quoted_name ppf (Embedded_name.of_feature feature suffix)
   end
 
   module Desugaring_error = struct
     type error =
       | Has_payload of payload
-      | Missing_closing_embedding
-      | Unexpected_opening_embedding_attribute
-      | Missing_alloc_mode
-      | Misannotated_function_cases
-      | Misannotated_layout
-      | Bad_syntactic_arity_embedding of string list
       | Expected_constraint_or_coerce
       | Expected_function_cases of Attribute_node.t
       | Expected_fun_or_newtype of Attribute_node.t
+      | Expected_newtype_with_layout_annotation of layout_annotation
       | Parameterless_function
 
     let report_error ~loc = function
-      | Bad_syntactic_arity_embedding suffix ->
+      | Has_payload payload ->
           Location.errorf ~loc
-            "Unknown syntactic-arity extension point %a."
-            Embedded_name.pp_quoted_name
-            (Embedded_name.of_feature feature suffix)
+            "Syntactic arity attribute has an unexpected payload:@;%a"
+            (Printast.payload 0) payload
       | Expected_constraint_or_coerce ->
           Location.errorf ~loc
             "Expected a Pexp_constraint or Pexp_coerce node at this position."
@@ -673,6 +675,10 @@ module N_ary_functions = struct
           Location.errorf ~loc
             "Only Pexp_fun or Pexp_newtype may carry the attribute %a."
             Attribute_node.format attribute
+      | Expected_newtype_with_layout_annotation annotation ->
+          Location.errorf ~loc
+            "Only Pexp_newtype may carry the attribute %a."
+            Attribute_node.format (Attribute_node.Layout_annotation annotation)
       | Parameterless_function ->
           Location.errorf ~loc
             "The expression is a Jane Syntax encoding of a function with no \
@@ -730,6 +736,8 @@ module N_ary_functions = struct
          fun_then(body) ::=
            | 'fun' pattern '->' body (* Pexp_fun *)
            | 'fun' '(' 'type' ident ')' '->' body (* Pexp_newtype *)
+           |{% '_builtin.layout_annotation' |
+              'fun' '(' 'type' ident ')' '->' body %} (* Pexp_newtype *)
 
          pexp_function ::=
            | 'function' cases
@@ -745,21 +753,18 @@ module N_ary_functions = struct
   *)
 
   let expand_n_ary_expr expr =
-    match find_and_remove_jane_syntax_attribute expr.pexp_attributes with
-    | None -> None
-    | Some (ext_name, attributes) -> begin
-        match Jane_syntax_parsing.Embedded_name.components ext_name with
-        | feature :: suffix
-          when String.equal feature extension_string -> begin
-            match Attribute_node.of_suffix suffix with
-            | Some ext -> Some (ext, attributes)
-            | None ->
-              Desugaring_error.raise
-                expr
-                (Bad_syntactic_arity_embedding suffix)
-          end
-        | _ :: _ -> None
-      end
+    match Of_ast.unwrap_jane_syntax_attributes expr.pexp_attributes with
+    | Error (Not_this_embedding _ | Non_embedding) -> None
+    | Ok (suffix, payload, attributes) ->
+        let attribute_node =
+          match Attribute_node.of_suffix suffix, payload with
+          | No_payload t, PStr [] -> Some t
+          | Payload f, payload -> Some (f payload ~loc:expr.pexp_loc)
+          | No_payload _, payload ->
+              Desugaring_error.raise expr (Has_payload payload)
+          | Unknown_suffix, _ -> None
+        in
+        Option.map (fun x -> x, attributes) attribute_node
 
   let require_function_cases expr ~arity_attribute =
     match expr.pexp_desc with
@@ -786,17 +791,20 @@ module N_ary_functions = struct
     | Some constraint_ -> constraint_
     | None -> Desugaring_error.raise expr Expected_constraint_or_coerce
 
-  let check_param pexp_desc =
-    match pexp_desc with
-    | Pexp_fun (lbl, def, pat, body) ->
+  let check_param pexp_desc pexp_loc ~layout =
+    match pexp_desc, layout with
+    | Pexp_fun (lbl, def, pat, body), None ->
         Some (Pparam_val (lbl, def, pat), body)
-    | Pexp_newtype (newtype, body) ->
+    | Pexp_newtype (newtype, body), layout ->
         let loc = { newtype.loc with loc_ghost = true } in
-        Some (Pparam_newtype (newtype, loc), body)
-    | _ -> None
+        Some (Pparam_newtype (newtype, layout, loc), body)
+    | _, None -> None
+    | _, Some layout ->
+        Desugaring_error.raise_with_loc pexp_loc
+          (Expected_newtype_with_layout_annotation layout)
 
-  let require_param pexp_desc pexp_loc ~arity_attribute =
-    match check_param pexp_desc with
+  let require_param pexp_desc pexp_loc ~arity_attribute ~layout =
+    match check_param pexp_desc pexp_loc ~layout with
     | Some x -> x
     | None ->
         Desugaring_error.raise_with_loc pexp_loc
@@ -810,57 +818,69 @@ module N_ary_functions = struct
         | Stop of function_constraint option * function_body
     end
     in
-    let extract_next_fun_param expr
-        (* The attributes are the remaining unconsumed attributes on the
-          Pexp_fun or Pexp_newtype node.
-        *)
+    (* Returns: the next parameter, together with whether there are possibly
+       more parameters available ("Continue") or whether all parameters have
+       been consumed ("Stop").
+
+       The returned attributes are the remaining unconsumed attributes on the
+       Pexp_fun or Pexp_newtype node.
+
+       The [layout] parameter gives the layout at which to interpret the type
+       introduced by [expr = Pexp_newtype _]. It is only supplied in a recursive
+       call to [extract_next_fun_param] in the event that it sees a
+       [Layout_annotation] attribute.
+    *)
+    let rec extract_next_fun_param expr ~layout
         : (function_param * attributes) option * continue_or_stop
       =
       match expand_n_ary_expr expr with
       | None -> begin
-          match check_param expr.pexp_desc with
+          match check_param expr.pexp_desc expr.pexp_loc ~layout with
           | Some (param, body) ->
               Some (param, expr.pexp_attributes), Continue body
           | None ->
               None, Stop (None, Pfunction_body expr)
         end
-      | Some (arity_attribute, unconsumed_attributes) -> begin
-          match arity_attribute with
-          | Top_level -> None, Stop (None, Pfunction_body expr)
-          | Local_constraint ->
-              (* We need not pass through any unconsumed attributes, as
-                 [Local_constraint] isn't the outermost Jane Syntax node:
-                 [extract_fun_params] took in [Pexp_fun] or [Pexp_newtype].
-              *)
-              let function_constraint, body = require_constraint expr in
-              None, Stop (Some function_constraint, Pfunction_body body)
-          | Fun_then after_fun ->
-              let param, body =
-                require_param expr.pexp_desc expr.pexp_loc ~arity_attribute
-              in
-              let continue_or_stop =
-                match after_fun with
-                | Cases ->
-                    let cases = require_function_cases body ~arity_attribute in
-                    let function_body =
-                      Pfunction_cases
-                        (cases, body.pexp_loc, body.pexp_attributes)
-                    in
-                    Stop (None, function_body)
-                | Constraint_then_cases ->
-                    let function_constraint, body = require_constraint body in
-                    let cases = require_function_cases body ~arity_attribute in
-                    let function_body =
-                      Pfunction_cases
-                        (cases, body.pexp_loc, body.pexp_attributes)
-                    in
-                    Stop (Some function_constraint, function_body)
-              in
-              Some (param, unconsumed_attributes), continue_or_stop
-          end
+      | Some (Top_level, _) -> None, Stop (None, Pfunction_body expr)
+      | Some (Layout_annotation next_layout, unconsumed_attributes) ->
+          extract_next_fun_param
+            { expr with pexp_attributes = unconsumed_attributes }
+            ~layout:(Some next_layout)
+      | Some (Local_constraint, _unconsumed_attributes) ->
+          (* We need not pass through any unconsumed attributes, as
+              [Local_constraint] isn't the outermost Jane Syntax node:
+              [extract_fun_params] took in [Pexp_fun] or [Pexp_newtype].
+          *)
+          let function_constraint, body = require_constraint expr in
+          None, Stop (Some function_constraint, Pfunction_body body)
+      | Some (Fun_then after_fun as arity_attribute, unconsumed_attributes) ->
+          let param, body =
+            require_param expr.pexp_desc expr.pexp_loc ~arity_attribute ~layout
+          in
+          let continue_or_stop =
+            match after_fun with
+            | Cases ->
+                let cases = require_function_cases body ~arity_attribute in
+                let function_body =
+                  Pfunction_cases
+                    (cases, body.pexp_loc, body.pexp_attributes)
+                in
+                Stop (None, function_body)
+            | Constraint_then_cases ->
+                let function_constraint, body = require_constraint body in
+                let cases = require_function_cases body ~arity_attribute in
+                let function_body =
+                  Pfunction_cases
+                    (cases, body.pexp_loc, body.pexp_attributes)
+                in
+                Stop (Some function_constraint, function_body)
+          in
+          Some (param, unconsumed_attributes), continue_or_stop
     in
     let rec loop expr ~rev_params =
-      let next_param, continue_or_stop = extract_next_fun_param expr in
+      let next_param, continue_or_stop =
+        extract_next_fun_param expr ~layout:None
+      in
       let rev_params =
         match next_param with
         | None -> rev_params
@@ -879,7 +899,7 @@ module N_ary_functions = struct
             Misc.fatal_error "called on something that isn't a newtype or fun"
       end;
       let unconsumed_attributes =
-        match extract_next_fun_param expr with
+        match extract_next_fun_param expr ~layout:None with
         | Some (_, attributes), _ -> attributes
         | None, _ -> Desugaring_error.raise expr Parameterless_function
       in
@@ -893,7 +913,6 @@ module N_ary_functions = struct
           [Pfunction_cases] body.
       *)
       [], constraint_, Pfunction_cases (cases, loc, [])
->>>>>>> ae9ba506 (Rework approach to use less attribute-heavy encoding)
     in
     (* Hack: be more permissive toward a way that a ppx can mishandle an
        attribute, which is to duplicate the top-level Jane Syntax
@@ -927,8 +946,8 @@ module N_ary_functions = struct
         end
 
   let n_ary_function_expr ext x =
-    let suffix = Attribute_node.to_suffix ext in
-    Ast_of.wrap_jane_syntax suffix x
+    let suffix, payload = Attribute_node.to_suffix_and_payload ext in
+    Ast_of.wrap_jane_syntax ?payload suffix x
 
   let expr_of =
     let add_param ?after_fun_attribute param body =
@@ -937,9 +956,14 @@ module N_ary_functions = struct
         | Pparam_val (label, default, pat) ->
             (Ast_helper.Exp.fun_ label default pat body
               [@alert "-prefer_jane_syntax"])
-        | Pparam_newtype (newtype, loc) ->
+        | Pparam_newtype (newtype, layout, loc) ->
             let loc = Location.ghostify loc in
-            Ast_helper.Exp.newtype newtype body ~loc
+            match layout with
+            | None -> Ast_helper.Exp.newtype newtype body ~loc
+            | Some layout ->
+                n_ary_function_expr
+                  (Layout_annotation layout)
+                  (Ast_helper.Exp.newtype newtype body ~loc)
       in
       match after_fun_attribute with
       | None -> fun_

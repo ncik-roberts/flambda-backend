@@ -7578,19 +7578,19 @@ and type_n_ary_function
            | Pparam_val (l, o, p) ->
                let loc = { loc with loc_start = p.ppat_loc.loc_start } in
                (Exp.fun_ l o p body ~loc [@alert "-prefer_jane_syntax"])
-           | Pparam_newtype (newtype, newtype_loc) ->
+           | Pparam_newtype (newtype, layout, newtype_loc) ->
                let loc = { loc with loc_start = newtype_loc.loc_start } in
-               match annot with
+               match layout with
                | None -> Exp.newtype newtype body ~loc
-               | Some annot ->
+               | Some layout ->
                    Jane_syntax.Layouts.expr_of ~loc
-                     (Lexp_newtype (newtype, annot, body)))
+                     (Lexp_newtype (newtype, layout, body)))
         params
         constrained_body
     in
     let ast =
       { pexp_desc = ast.pexp_desc;
-        pexp_attributes = attributes;
+        pexp_attributes = ast.pexp_attributes @ attributes;
         pexp_loc = loc;
         pexp_loc_stack = [];
       }

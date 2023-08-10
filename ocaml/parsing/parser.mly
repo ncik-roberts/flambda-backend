@@ -728,7 +728,7 @@ let all_params_as_newtypes =
     | Pparam_val _ -> false
   in
   let as_newtype = function
-    | Pparam_newtype (x, loc) -> Some (x, loc)
+    | Pparam_newtype (x, layout, _) -> Some (x, layout)
     | Pparam_val _ -> None
   in
   fun params ->
@@ -766,10 +766,11 @@ let mkfunction ~loc ~attrs params body_constraint body =
       match all_params_as_newtypes params with
       | None -> n_ary_function (params, body_constraint, body) ~loc ~attrs
       | Some newtypes ->
-          let desc =
-            mkghost_newtype_function_body newtypes body_constraint body_exp
-          in
-          mkexp_attrs ~loc desc attrs
+          wrap_exp_attrs
+            ~loc
+            (mkghost_newtype_function_body newtypes body_constraint body_exp
+               ~loc)
+            attrs
     end
 
 (* Alternatively, we could keep the generic module type in the Parsetree
