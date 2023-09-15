@@ -314,8 +314,10 @@ let rec approx ppf = function
       let n = List.length fundesc.fun_arity.params_layout in
       begin match fundesc.fun_arity.function_kind with
       | Tupled -> Format.fprintf ppf "@ arity -%i" n
-      | Curried {nlocal=0} -> Format.fprintf ppf "@ arity %i" n
-      | Curried {nlocal=k} -> Format.fprintf ppf "@ arity %i(%i L)" n k
+      | Curried {partial_application=Always_global} ->
+          Format.fprintf ppf "@ arity %i" n
+      | Curried {partial_application=Global_if_omitting_at_most {nargs}} ->
+          Format.fprintf ppf "@ arity %i(%i L)" n nargs
       end;
       if fundesc.fun_closed then begin
         Format.fprintf ppf "@ (closed)"

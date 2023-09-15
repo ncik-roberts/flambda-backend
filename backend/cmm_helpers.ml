@@ -1280,13 +1280,13 @@ let tuplify_function_name arity result =
 
 let curry_function_sym_name function_kind arity result =
   match function_kind with
-  | Lambda.Curried { nlocal } ->
+  | Curried { nlocal } ->
     Compilenv.need_curry_fun function_kind arity result;
     "caml_curry"
     ^ unique_arity_identifier arity
     ^ result_layout_suffix result
     ^ if nlocal > 0 then "L" ^ Int.to_string nlocal else ""
-  | Lambda.Tupled ->
+  | Tupled ->
     if List.exists (function [| Val |] | [| Int |] -> false | _ -> true) arity
     then
       Misc.fatal_error
@@ -3015,7 +3015,7 @@ let default_generic_fns : Cmx_format.generic_fns =
 
 module Generic_fns_tbl = struct
   type t =
-    { curry : (Lambda.function_kind * machtype list * machtype, unit) Hashtbl.t;
+    { curry : (function_kind * machtype list * machtype, unit) Hashtbl.t;
       apply : (machtype list * machtype * Lambda.alloc_mode, unit) Hashtbl.t;
       send : (machtype list * machtype * Lambda.alloc_mode, unit) Hashtbl.t
     }

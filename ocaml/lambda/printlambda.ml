@@ -702,8 +702,12 @@ let rec lam ppf = function
   | Lfunction{kind; params; return; body; attr; mode; region} ->
       let pr_params ppf params =
         match kind with
-        | Curried {nlocal} ->
-            fprintf ppf "@ {nlocal = %d}" nlocal;
+        | Curried { partial_application } ->
+            fprintf ppf "@ {partial_application = %t}" (fun ppf ->
+              (match partial_application with
+               | Always_global -> fprintf ppf "Always_global"
+               | Global_if_omitting_at_most {nargs=n} ->
+                   fprintf ppf "Global_if_omitting_at_most { nargs = %d }" n));
             List.iter (fun (p : Lambda.lparam) ->
                 (* Make sure we change this once there are attributes *)
                 let No_attributes = p.attributes in

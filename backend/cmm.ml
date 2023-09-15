@@ -332,6 +332,8 @@ type phrase =
     Cfunction of fundecl
   | Cdata of data_item list
 
+type function_kind = Curried of { nlocal : int } | Tupled
+
 let ccatch (i, ids, e1, e2, dbg, kind, is_cold) =
   Ccatch(Nonrecursive, [i, ids, e2, dbg, is_cold], e1, kind)
 

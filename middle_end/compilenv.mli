@@ -69,7 +69,7 @@ val flambda2_set_export_info : Flambda2_cmx.Flambda_cmx_format.t -> unit
         (* Set the export information for the current unit (Flambda 2 only). *)
 
 val need_curry_fun:
-  Lambda.function_kind -> Cmm.machtype list -> Cmm.machtype -> unit
+  Cmm.function_kind -> Cmm.machtype list -> Cmm.machtype -> unit
 val need_apply_fun:
   Cmm.machtype list -> Cmm.machtype -> Lambda.alloc_mode -> unit
 val need_send_fun:

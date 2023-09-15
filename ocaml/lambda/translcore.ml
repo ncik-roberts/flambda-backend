@@ -196,73 +196,51 @@ let maybe_region_exp sort exp lam =
 
 let is_alloc_heap = function Alloc_heap -> true | Alloc_local -> false
 
-(* In cases where we're careful to preserve syntactic arity, we disable
-   the arity fusion attempted by simplif.ml *)
-let function_attribute_disallowing_arity_fusion =
-  { default_function_attribute with may_fuse_arity = false }
+let partial_application_always_global =
+  curried_function_kind_exn Always_global ~may_fuse_arity:false
 
 (** A well-formed function parameter list is of the form
      [G @ L @ [ Final_arg ]],
     where the values of G and L are of the form [More_args { partial_mode }],
     where [partial_mode] has locality Global in G and locality Local in L.
 
-    [curried_function_kind p] checks the well-formedness of the list and returns
-    the corresponding [curried_function_kind]. [nlocal] is populated as follows:
-      - if {v |L| > 0 v}, then {v nlocal = |L| + 1 v}.
-      - if {v |L| = 0 v},
-        * if the function doesn't have a region, the final arg has mode local,
-          or the function itself is allocated locally, then {v nlocal = 1 v}.
-        * otherwise, {v nlocal = 0 v}.
-*)
-(* CR-someday: Now that some functions' arity won't be changed downstream of
-   lambda (see [may_fuse_arity = false]), we could change [nlocal] to be
-   more expressive. I suggest the variant:
+    [make_curried_function_kind p] checks the well-formedness of the list and
+    returns the corresponding [curried_function_kind], where
+    [partial_application] is:
+      - [Global_if_omitting_at_most {nargs=|L| + 1}] if {v |L| > 0 v}
+      - [Always_global] otherwise
 
-   {[
-     type partial_application_is_local_when =
-       | Applied_up_to_nth_argument_from_end of int
-       | Never
-   ]}
+    [may_fuse_arity] must be [false] when {v |L| = 0 v} because we don't
+    attempt to calculate whether [Final_arg] is local or not -- if [Final_arg]
+    was local and we fused this function with its body, that would affect
+    the [curried_function_kind] of the fused function.
 
-   I believe this will allow us to get rid of the complicated logic for
-   |L| = 0, and help clarify how clients use this type. I plan on doing
-   this in a follow-on PR.
+    (But we want [may_fuse_arity] to be false anyway; we want to preserve
+    syntactic arity.)
 *)
-let curried_function_kind
-    : (function_curry * Mode.Alloc.t) list
-      -> region:bool
-      -> alloc_mode:alloc_mode
-      -> curried_function_kind
-  =
-  let rec loop params ~region ~alloc_mode ~running_count ~found_local_already =
+let make_curried_function_kind : function_curry list -> curried_function_kind =
+  let rec loop params ~running_count ~found_local_already =
     match params with
     | [] -> Misc.fatal_error "Expected to find [Final_arg] at end of list"
-    | [ Final_arg, final_arg_mode ] ->
-        let nlocal =
-          if region
-             && running_count = 0
-             && is_alloc_heap alloc_mode
-             && is_alloc_heap (transl_alloc_mode final_arg_mode)
-          then 0
-          else running_count + 1
-        in
-        { nlocal }
-    | (Final_arg, _) :: _ -> Misc.fatal_error "Found [Final_arg] too early"
-    | (More_args { partial_mode }, _) :: params ->
+    | [ Final_arg ] ->
+        if running_count > 0
+        then
+          curried_function_kind ~nlocal:(running_count+1) ~may_fuse_arity:false
+        else partial_application_always_global
+    | Final_arg :: _ -> Misc.fatal_error "Found [Final_arg] too early"
+    | More_args { partial_mode } :: params ->
         match transl_alloc_mode partial_mode with
         | Alloc_heap when not found_local_already ->
-            loop params ~region ~alloc_mode
-              ~running_count:0 ~found_local_already
+            loop params ~running_count:0 ~found_local_already
         | Alloc_local ->
-            loop params ~region ~alloc_mode
+            loop params
               ~running_count:(running_count + 1) ~found_local_already:true
         | Alloc_heap ->
             Misc.fatal_error
               "A function argument with a Global partial_mode unexpectedly \
               found following a function argument with a Local partial_mode"
   in
-  fun params ~region ~alloc_mode ->
-    loop params ~region ~alloc_mode ~running_count:0 ~found_local_already:false
+  fun params -> loop params ~running_count:0 ~found_local_already:false
 
 (* Insertion of debugging events *)
 
@@ -859,13 +837,15 @@ and transl_exp0 ~in_new_scope ~scopes sort e =
          (* other cases compile to a lazy block holding a function.  The
             typechecker enforces that e has layout value.  *)
          let scopes = enter_lazy ~scopes in
-         let fn = lfunction ~kind:(Curried {nlocal=0})
+         let fn = lfunction ~kind:(Curried (curried_function_kind
+                                              ~nlocal:0
+                                              ~may_fuse_arity:false))
                             ~params:[{ name = Ident.create_local "param";
                                        layout = Lambda.layout_unit;
                                        attributes = Lambda.default_param_attribute;
                                        mode = alloc_heap}]
                             ~return:Lambda.layout_lazy_contents
-                            ~attr:function_attribute_disallowing_arity_fusion
+                            ~attr:default_function_attribute
                             ~loc:(of_location ~scopes e.exp_loc)
                             ~mode:alloc_heap
                             ~region:true
@@ -974,14 +954,13 @@ and transl_exp0 ~in_new_scope ~scopes sort e =
           stub = false;
           poll = Default_poll;
           tmc_candidate = false;
-          may_fuse_arity = false;
         } in
       let funcid = Ident.create_local ("probe_handler_" ^ name) in
       let return_layout = layout_unit (* Probe bodies have type unit. *) in
       let handler =
         let scopes = enter_value_definition ~scopes funcid in
         lfunction
-          ~kind:(Curried {nlocal=0 })
+          ~kind:(Curried partial_application_always_global)
           (* CR layouts: Adjust param layouts when we allow other things in
              probes. *)
           ~params:(List.map (fun name -> { name; layout = layout_probe_arg; attributes = Lambda.default_param_attribute; mode = alloc_heap }) param_idents)
@@ -1173,11 +1152,6 @@ and transl_apply ~scopes
           let arg_mode = transl_alloc_mode mode_arg in
           let ret_mode = transl_alloc_mode mode_ret in
           let body = build_apply handle [Lvar id_arg] loc Rc_normal ret_mode l in
-          let nlocal =
-            match join_mode mode (join_mode arg_mode ret_mode) with
-            | Alloc_local -> 1
-            | Alloc_heap -> 0
-          in
           let region =
             match ret_mode with
             | Alloc_local -> false
@@ -1190,9 +1164,9 @@ and transl_apply ~scopes
               attributes = Lambda.default_param_attribute;
               mode = arg_mode
             }] in
-          lfunction ~kind:(Curried {nlocal}) ~params
+          lfunction ~kind:(Curried partial_application_always_global) ~params
                     ~return:result_layout ~body ~mode ~region
-                    ~attr:{ default_stub_attribute with may_fuse_arity = false }
+                    ~attr:default_stub_attribute
                     ~loc
         in
         List.fold_right
@@ -1314,14 +1288,12 @@ and transl_tupled_function
 
 and transl_curried_function
     ~scopes ~return_sort ~return_layout ~region ~mode loc repr params body =
-  let { nlocal } =
-    let param_curries = List.map (fun fp -> fp.fp_curry, fp.fp_mode) params in
-    curried_function_kind
-      ~region
-      ~alloc_mode:mode
+  let kind =
+    let param_curries = List.map (fun fp -> fp.fp_curry) params in
+    make_curried_function_kind
       (match body with
        | Tfunction_body _ -> param_curries
-       | Tfunction_cases fc -> param_curries @ [ Final_arg, fc.fc_arg_mode ])
+       | Tfunction_cases _ -> param_curries @ [ Final_arg ])
   in
   let cases_param, body =
     match body with
@@ -1400,10 +1372,15 @@ and transl_curried_function
       function returning the translation of an (N-n)-ary typedtree function.
     *)
     let open struct
-      type acc = { body : lambda; return_layout : layout; region : bool; nlocal : int }
+      type acc =
+        { body : lambda;
+          return_layout : layout;
+          region : bool;
+          kind : curried_function_kind;
+        }
     end
     in
-    let params, { body; return_layout; region; nlocal } =
+    let params, { body; return_layout; region; kind } =
       match Misc.Stdlib.List.chunks_of (Lambda.max_arity ()) params with
       | [] ->
           Misc.fatal_error
@@ -1411,40 +1388,49 @@ and transl_curried_function
       | first_chunk :: rest_of_chunks ->
         let acc =
           List.fold_right
-            (fun chunk { body; return_layout; nlocal; region } ->
+            (fun chunk { body; return_layout; kind; region } ->
               let chunk_length = List.length chunk in
               let loc = of_location ~scopes loc in
-              let current_nlocal, current_mode, enclosing_region =
-                if nlocal >= chunk_length
-                then chunk_length, alloc_local, false
-                else nlocal, mode, true
+              let current_kind, enclosing_kind, current_mode, enclosing_region =
+                match kind.partial_application with
+                | Global_if_omitting_at_most { nargs }
+                  when nargs >= chunk_length ->
+                    let current_kind =
+                      curried_function_kind
+                        ~nlocal:chunk_length ~may_fuse_arity:false
+                    in
+                    let enclosing_kind =
+                      curried_function_kind
+                        ~nlocal:(nargs - chunk_length) ~may_fuse_arity:false
+                    in
+                    current_kind, enclosing_kind, alloc_local, false
+                | Always_global | Global_if_omitting_at_most _ ->
+                    kind, partial_application_always_global, mode, true
               in
-              let enclosing_nlocal = nlocal - current_nlocal in
               let body =
                 if region then maybe_region_layout return_layout body else body
               in
               let body =
                 lfunction
-                  ~kind:
-                    (Curried { nlocal=current_nlocal })
+                  ~kind:(Curried current_kind)
                   ~params:chunk ~mode:current_mode
                   ~return:return_layout ~body
-                  ~attr:function_attribute_disallowing_arity_fusion
+                  ~attr:default_function_attribute
                   ~loc ~region
               in
               (* we return Pgenval (for a function) after the rightmost chunk *)
               { body;
                 return_layout = Pvalue Pgenval;
-                nlocal = enclosing_nlocal;
+                kind = enclosing_kind;
                 region = enclosing_region;
               })
             rest_of_chunks
             (let region = region || not (may_allocate_in_region body) in
-            { body; return_layout; nlocal; region })
+            { body; return_layout; kind; region })
         in
         first_chunk, acc
     in
-    ((Curried { nlocal }, params, return_layout, region), body)
+    ((Curried kind, params, return_layout, region), body)
 
 and transl_function ~scopes e alloc_mode params body return_sort region =
   let mode = transl_alloc_mode alloc_mode in
@@ -1457,7 +1443,7 @@ and transl_function ~scopes e alloc_mode params body return_sort region =
          transl_function_without_attributes ~mode ~return_sort ~scopes ~region
            e.exp_loc repr params body)
   in
-  let attr = function_attribute_disallowing_arity_fusion in
+  let attr = default_function_attribute in
   let loc = of_location ~scopes e.exp_loc in
   let body = if region then maybe_region_layout return body else body in
   let lam = lfunction ~kind ~params ~return ~body ~attr ~loc ~mode ~region in
@@ -1859,7 +1845,7 @@ and transl_letop ~scopes loc env let_ ands param param_sort case case_sort
                   fc_arg_mode = Mode.Alloc.legacy; fc_arg_sort = param_sort;
                 }))
     in
-    let attr = function_attribute_disallowing_arity_fusion in
+    let attr = default_function_attribute in
     let loc = of_location ~scopes case.c_rhs.exp_loc in
     let body = maybe_region_layout return body in
     lfunction ~kind ~params ~return ~body ~attr ~loc

@@ -502,9 +502,37 @@ type loop_attribute =
   | Never_loop (* [@loop never] *)
   | Default_loop (* no [@loop] attribute *)
 
-type curried_function_kind = { nlocal : int }
+type partial_application =
+  | Always_global
+  | Global_if_omitting_at_most of { nargs : int }
 
-type function_kind = Curried of curried_function_kind | Tupled
+type curried_function_kind =
+  { partial_application: partial_application;
+    may_fuse_arity: bool;
+  }
+
+let curried_function_kind_exn partial_application ~may_fuse_arity =
+  begin match partial_application with
+  | Always_global -> ()
+  | Global_if_omitting_at_most { nargs } ->
+      if may_fuse_arity
+      then assert (nargs > 0)
+      else assert (nargs > 1)
+  end;
+  { partial_application; may_fuse_arity }
+
+let curried_function_kind ~nlocal ~may_fuse_arity =
+  let partial_application =
+    match nlocal with
+    | 0 -> Always_global
+    | 1 when not may_fuse_arity -> Always_global
+    | nargs -> Global_if_omitting_at_most { nargs }
+  in
+  curried_function_kind_exn partial_application ~may_fuse_arity
+
+type function_kind =
+  | Curried of curried_function_kind
+  | Tupled
 
 type let_kind = Strict | Alias | StrictOpt
 
@@ -531,7 +559,6 @@ type function_attribute = {
   is_a_functor: bool;
   stub: bool;
   tmc_candidate: bool;
-  may_fuse_arity: bool;
 }
 
 type scoped_location = Debuginfo.Scoped_location.t
@@ -660,12 +687,17 @@ let lfunction ~kind ~params ~return ~body ~attr ~loc ~mode ~region =
   | Alloc_local, Tupled ->
      (* Tupled optimisation does not apply to local functions *)
      assert false
-  | mode, Curried {nlocal} ->
-     let nparams = List.length params in
-     assert (0 <= nlocal);
-     assert (nlocal <= nparams);
-     if not region then assert (nlocal >= 1);
-     if is_local_mode mode then assert (nlocal = nparams)
+  | mode, Curried { partial_application } ->
+      let nparams = List.length params in
+      match partial_application with
+      | Always_global ->
+          if not region then assert (nparams = 1);
+          if is_local_mode mode then assert (nparams = 1)
+      | Global_if_omitting_at_most {nargs} ->
+          assert (0 <= nargs);
+          assert (nargs <= nparams);
+          if not region then assert (nargs >= 1);
+          if is_local_mode mode then assert (nargs = nparams)
   end;
   Lfunction { kind; params; return; body; attr; loc; mode; region }
 
@@ -718,14 +750,6 @@ let default_function_attribute = {
   is_a_functor = false;
   stub = false;
   tmc_candidate = false;
-  (* Plain functions ([fun] and [function]) set [may_fuse_arity] to [false] so
-     that runtime arity matches syntactic arity in more situations.
-     Many things compile to functions without having a notion of syntactic arity
-     that survives typechecking, e.g. functors. Multi-arg functors are compiled
-     as nested unary functions, and rely on the arity fusion in simplif to make
-     them multi-argument. So, we keep arity fusion turned on by default for now.
-  *)
-  may_fuse_arity = true;
 }
 
 let default_stub_attribute =

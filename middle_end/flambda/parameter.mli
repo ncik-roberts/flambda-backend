@@ -28,7 +28,8 @@ val wrap : Variable.t -> Lambda.alloc_mode -> Lambda.layout -> t
 val var : t -> Variable.t
 
 (** Mode of the resulting closure after partially applying
-    up to and including this parameter *)
+    up to and including this parameter. If the parameter is the
+*)
 val alloc_mode : t -> Lambda.alloc_mode
 
 val kind : t -> Lambda.layout

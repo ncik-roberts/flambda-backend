@@ -558,12 +558,12 @@ let simplify_lets lam =
   | Lfunction{kind=outer_kind; params; return=outer_return; body = l;
               attr=attr1; loc; mode; region=outer_region} ->
       begin match outer_kind, outer_region, simplif l with
-        Curried {nlocal=0},
+        Curried {partial_application=Always_global; may_fuse_arity=true},
         true,
-        Lfunction{kind=Curried _ as kind; params=params'; return=return2;
-                  body; attr=attr2; loc; mode=inner_mode; region}
+        Lfunction{kind=Curried { may_fuse_arity=true } as kind;
+                  params=params'; return=return2;
+                  body; loc; mode=inner_mode; region}
         when optimize &&
-             attr1.may_fuse_arity && attr2.may_fuse_arity &&
              List.length params + List.length params' <= Lambda.max_arity() ->
           (* The returned function's mode should match the outer return mode *)
           assert (is_heap_mode inner_mode);
@@ -835,7 +835,9 @@ let split_default_wrapper ~id:fun_id ~kind ~params ~return ~body
         let body = Lambda.rename subst body in
         let body = if add_region then Lregion (body, return) else body in
         let inner_fun =
-          lfunction ~kind:(Curried {nlocal=0})
+          lfunction
+            ~kind:
+              (Curried (curried_function_kind ~nlocal:0 ~may_fuse_arity:true))
             ~params:new_ids
             ~return ~body ~attr ~loc ~mode ~region:true
         in
@@ -844,7 +846,11 @@ let split_default_wrapper ~id:fun_id ~kind ~params ~return ~body
   try
     (* TODO: enable this optimisation even in the presence of local returns *)
     begin match kind with
-    | Curried {nlocal} when nlocal > 0 -> raise Exit
+    | Curried {partial_application=Always_global} when not orig_region ->
+        raise Exit
+    | Curried {partial_application=Global_if_omitting_at_most {nargs}} ->
+        assert (nargs > 0);
+        raise Exit
     | Tupled when not orig_region -> raise Exit
     | _ -> assert orig_region
     end;

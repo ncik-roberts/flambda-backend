@@ -37,12 +37,16 @@ let layout_table = layout_block
 let layout_meth = layout_any_value
 let layout_tables = Lambda.Pvalue Pgenval
 
+let curried_always_global =
+  curried_function_kind_exn Always_global ~may_fuse_arity:true
 
-let lfunction ?(kind=Curried {nlocal=0}) ?(region=true)
+let lfunction
+    ?(kind=Curried curried_always_global)
+    ?(region=true)
     return_layout params body =
   if params = [] then body else
   match kind, body with
-  | Curried {nlocal=0},
+  | Curried {partial_application=Always_global},
     Lfunction {kind = Curried _ as kind; params = params';
                body = body'; attr; loc}
     when List.length params + List.length params' <= Lambda.max_arity() ->
@@ -221,7 +225,7 @@ let rec build_object_init ~scopes cl_table obj params inh_init obj_init cl =
              partial
          in
          Lambda.lfunction
-                   ~kind:(Curried {nlocal=0})
+                   ~kind:(Curried curried_always_global)
                    ~params:(lparam param arg_layout::params)
                    ~return:layout_obj
                    ~attr:default_function_attribute
@@ -231,7 +235,7 @@ let rec build_object_init ~scopes cl_table obj params inh_init obj_init cl =
                    ~region:true
        in
        begin match obj_init with
-         Lfunction {kind = Curried {nlocal=0}; params; body = rem} ->
+         Lfunction {kind = Curried {partial_application=Always_global}; params; body = rem} ->
           build params rem
        | rem ->
           build [] rem
@@ -509,7 +513,7 @@ let rec transl_class_rebind ~scopes obj_init cl vf =
             None (Lvar param) [pat, rem] partial
         in
         Lambda.lfunction
-                  ~kind:(Curried {nlocal=0})
+                  ~kind:(Curried curried_always_global)
                   ~params:(lparam param arg_layout :: params)
                   ~return:return_layout
                   ~attr:default_function_attribute
@@ -520,7 +524,7 @@ let rec transl_class_rebind ~scopes obj_init cl vf =
       in
       (path, path_lam,
        match obj_init with
-         Lfunction {kind = Curried {nlocal=0}; params; body} ->
+         Lfunction {kind = Curried {partial_application=Always_global}; params; body} ->
           build params body
        | rem ->
           build [] rem)
@@ -872,7 +876,7 @@ let transl_class ~scopes ids cl_id pub_meths cl vflag =
   let concrete = (vflag = Concrete)
   and lclass lam =
     let cl_init = llets layout_function (Lambda.lfunction
-                           ~kind:(Curried {nlocal=0})
+                           ~kind:(Curried curried_always_global)
                            ~attr:default_function_attribute
                            ~loc:Loc_unknown
                            ~return:layout_function
@@ -897,7 +901,7 @@ let transl_class ~scopes ids cl_id pub_meths cl vflag =
   and lbody_virt lenvs =
     Lprim(Pmakeblock(0, Immutable, None, alloc_heap),
           [lambda_unit; Lambda.lfunction
-                          ~kind:(Curried {nlocal=0})
+                          ~kind:(Curried curried_always_global)
                           ~attr:default_function_attribute
                           ~loc:Loc_unknown
                           ~return:layout_function
@@ -957,7 +961,7 @@ let transl_class ~scopes ids cl_id pub_meths cl vflag =
   let lclass lam =
     Llet(Strict, layout_function, class_init,
          Lambda.lfunction
-                   ~kind:(Curried {nlocal=0})
+                   ~kind:(Curried curried_always_global)
                    ~params:[lparam cla layout_table]
                    ~return:layout_function
                    ~attr:default_function_attribute
@@ -984,7 +988,7 @@ let transl_class ~scopes ids cl_id pub_meths cl vflag =
   and lclass_virt () =
     lset cached 0
       (Lambda.lfunction
-         ~kind:(Curried {nlocal=0})
+         ~kind:(Curried curried_always_global)
          ~attr:default_function_attribute
          ~loc:Loc_unknown
          ~mode:alloc_heap

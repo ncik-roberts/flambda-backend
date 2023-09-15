@@ -41,6 +41,9 @@ type error =
 | Conflicting_inline_attributes
 | Non_value_layout of type_expr * Layout.Violation.t
 
+let curried_always_global =
+  curried_function_kind_exn Always_global ~may_fuse_arity:true
+
 exception Error of Location.t * error
 
 (* CR layouts v7: This is used as part of the "void safety check" in the case of
@@ -160,7 +163,7 @@ and apply_coercion_result loc strict funct params args cc_res =
       name_lambda strict funct Lambda.layout_functor
         (fun id ->
            lfunction
-             ~kind:(Curried {nlocal=0})
+             ~kind:(Curried curried_always_global)
              ~params:(List.rev params)
              ~return:Lambda.layout_module
              ~attr:{ default_function_attribute with
@@ -579,7 +582,7 @@ let rec compile_functor ~scopes mexp coercion root_path loc =
       functor_params_rev
   in
   lfunction
-    ~kind:(Curried {nlocal=0})
+    ~kind:(Curried curried_always_global)
     ~params
     ~return:Lambda.layout_module
     ~attr:{
@@ -592,7 +595,6 @@ let rec compile_functor ~scopes mexp coercion root_path loc =
       check = Ignore_assert_all Zero_alloc;
       stub = false;
       tmc_candidate = false;
-      may_fuse_arity = true;
     }
     ~loc
     ~mode:alloc_heap

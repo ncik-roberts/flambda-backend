@@ -387,12 +387,57 @@ type loop_attribute =
   | Never_loop (* [@loop never] *)
   | Default_loop (* no [@loop] attribute *)
 
-type curried_function_kind = { nlocal: int }
-(* [nlocal] determines how many arguments may be partially applied
-    before the resulting closure must be locally allocated.
-    See [lfunction] for details *)
+type partial_application =
+  | Always_global
+  | Global_if_omitting_at_most of { nargs : int }
 
-type function_kind = Curried of curried_function_kind | Tupled
+(* Invariant:
+   If [partial_application = Global_if_omitting_at_most { nargs }],
+   then [nargs > 0]. (That's because nargs=0 should instead be represented
+   as Always_global.)
+
+   If additionally [may_fuse_arity = false] then [nargs > 1]. That's because, if
+   [nargs] was 1 and the function can't fuse with its body, it's enough to
+   represent this as Always_global.
+
+   It's meaningful for [may_fuse_arity = true] and [nargs = 1]. This means
+   "if 0 arguments are omitted in a partial application, then the resulting
+   closure needs to be locally allocated". This situation arises because a
+   function F could be fused with its (function) body G in [Simplif] to form a
+   new function H such that arity(H) = arity(F) + arity(G). Here, an application
+   of H to arity(F) arguments is a partial application that requires locally
+   allocating a closure.
+*)
+type curried_function_kind = private
+  { partial_application: partial_application;
+    may_fuse_arity: bool;
+  }
+
+val curried_function_kind_exn :
+  partial_application -> may_fuse_arity:bool -> curried_function_kind
+(* Create a [curried_function_kind] upholding the described invariants. *)
+
+val curried_function_kind :
+  nlocal:int -> may_fuse_arity:bool -> curried_function_kind
+(* Create a [curried_function_kind], raising only in truly exceptional
+   circumstances (i.e. [nlocal < 0]). [nlocal] is similar to the [nargs]
+   in [Global_if_omitting_at_most { nargs }], except it's allowed to be 0, in
+   which case [curried_function_kind] returns [Always_global]. If a function [f]
+   takes [n] parameters, then the closure resulting from a partial application
+   needs to be locally if [f] is applied to at least [n-nlocal] arguments.
+
+   If the function can't be fused (i.e. [may_fuse_arity = false]),
+   [curried_function_kind] "forgets" when [nlocal = 1] and instead returns
+   [Always_global], because there's no way for the function to be "partially"
+   applied to [n-nlocal+1 = n] arguments.
+*)
+
+type function_kind =
+  | Curried of curried_function_kind
+  | Tupled
+(* [partial_application] determines how many arguments may be partially applied
+   before the resulting closure must be locally allocated. See [lfunction] for
+   details *)
 
 type let_kind = Strict | Alias | StrictOpt
 (* Meaning of kinds for let x = e in e':
@@ -423,9 +468,6 @@ type function_attribute = {
   is_a_functor: bool;
   stub: bool;
   tmc_candidate: bool;
-  (* [may_fuse_arity] is true if [simplif.ml] is permitted to fuse arity, i.e.,
-     to perform the rewrite [fun x -> fun y -> e] to [fun x y -> e] *)
-  may_fuse_arity: bool;
 }
 
 type parameter_attribute = No_attributes
