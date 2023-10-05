@@ -366,6 +366,7 @@ and function_param =
     (** [fp_param] is the identifier that is to be used to name the
         parameter of the function.
     *)
+    (* CR nroberts: maybe this should be on [fp_kind]?  *)
     fp_partial: partial;
     (**
        [fp_partial] =

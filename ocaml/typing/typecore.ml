@@ -6468,8 +6468,8 @@ and type_function
       in
       (* [ty_arg_internal_mono] is the type of the parameter viewed internally
          to the function. This is different than [ty_arg_mono] exactly for
-         optional arguments with defaults, where the external [ty_arg_mono]
-         is optional and the internal view is not optional.
+         optional arguments with defaults, where the external [ty_arg_mono] is
+         optional and the internal view is not optional.
       *)
       let ty_arg_internal_mono, default_arg =
         match default_arg with
@@ -6489,42 +6489,112 @@ and type_function
               try unify env (type_option ty_default_arg) ty_arg_mono
               with Unify _ -> assert false;
             end;
-            (* Defaults are always global. They can be moved out of the
-               function's region by Simplf.split_default_wrapper. *)
-            let default_arg =
-              type_expect env mode_legacy default (mk_expected ty_default_arg)
-            in
-            ty_default_arg, Some (default_arg, arg_label, default_arg_sort)
+            ty_default_arg, Some (default, arg_label, default_arg_sort)
       in
-      let (pat, params, body, newtypes, params_contain_gadt, inner_split_history)
+      let
+        ( pat,
+          params,
+          body,
+          newtypes,
+          params_contain_gadt,
+          inner_split_history,
+          fp_kind )
         , partial =
-        (* Check everything else in the scope of the parameter. *)
-        map_half_typed_cases Value env expected_pat_mode
-          ty_arg_internal_mono ty_ret pat.ppat_loc
-          ~partial_flag:true
-          (* We don't make use of [case_data] here so we pass unit. *)
-          [ { pattern = pat; has_guard = false; needs_refute = false }, () ]
-          ~type_body:begin
-            fun () pat ~ext_env ~ty_expected ~ty_infer:_
-              ~contains_gadt:param_contains_gadt ->
-              let { function_ = _, params, body;
-                    newtypes;
-                    params_contain_gadt = suffix_contains_gadt;
-                    split_history = inner_split_history;
+        match default_arg, may_contain_gadts pat with
+        | Some (default_arg, _, default_arg_sort), false ->
+            let may_contain_modules = may_contain_modules pat in
+            let allow_modules =
+              if may_contain_modules
+              then begin
+                begin_def ();
+                let scope = create_scope () in
+                Modules_allowed { scope }
+              end else Modules_rejected
+            in
+            let (pat_exp_list, new_env) =
+              type_let With_attributes env Nonrecursive
+                [ { pvb_pat = pat;
+                    pvb_expr = default_arg;
+                    pvb_attributes = [];
+                    (* CR nroberts: do better. *)
+                    pvb_loc = Location.none;
                   }
-                =
-                type_function ext_env expected_inner_mode ty_expected
+                ]
+                allow_modules
+            in
+            let pat, default_arg =
+              match pat_exp_list with
+              | [ { vb_pat; vb_expr = default_arg; } ] -> vb_pat, default_arg
+              | [] | _ :: _ :: _ -> assert false (* CR nroberts: Misc.fatal_error *)
+            in
+            let { function_ = _, params, body;
+                  newtypes;
+                  params_contain_gadt;
+                  split_history = inner_split_history;
+                }
+              =
+                type_function new_env expected_inner_mode ty_expected
                   rest body_constraint body
                   ~in_function ~param_index:(param_index+1)
-              in
-              let params_contain_gadt = param_contains_gadt || suffix_contains_gadt in
-              (pat, params, body, newtypes, params_contain_gadt, inner_split_history)
-          end
-        |> function
-          (* The result must be a singleton because we passed a singleton
-             list above. *)
-        | [ result ], partial -> result, partial
-        | ([] | _ :: _ :: _), _ -> assert false
+            in
+            (* CR nroberts: need to call [map_half_typed_cases] here too... *)
+            if may_contain_modules then begin
+              end_def ();
+              (match body with
+               | Tfunction_cases _ -> assert false (* CR nroberts: Misc.fatal_error *)
+               | Tfunction_body body ->
+                   (* The "body" component of the scope escape check. *)
+                   unify_exp new_env body (newvar (Jkind.any ~why:Dummy_jkind)));
+            end;
+            unify_exp env default_arg (instance ty_arg_internal_mono);
+            let fp_kind =
+              Tparam_optional_default (pat, default_arg, default_arg_sort)
+            in
+            (pat, params, body, newtypes, params_contain_gadt,
+             inner_split_history, fp_kind), Total
+        | None, _ | Some _, true ->
+            (* Check everything else in the scope of the parameter. *)
+            let fp_kind : pattern -> _ =
+              match default_arg with
+              | None -> fun pat -> Tparam_pat pat
+              | Some (default_arg, _, default_arg_sort) ->
+                  (* CR nroberts: comment from before about legacy *)
+                  let default_arg =
+                    type_expect env mode_legacy default_arg
+                      (mk_expected ty_arg_internal_mono)
+                  in
+                  fun pat ->
+                    Tparam_optional_default (pat, default_arg, default_arg_sort)
+            in
+            map_half_typed_cases Value env expected_pat_mode
+              ty_arg_internal_mono ty_ret pat.ppat_loc
+              ~partial_flag:true
+              (* We don't make use of [case_data] here so we pass unit. *)
+              [ { pattern = pat; has_guard = false; needs_refute = false }, () ]
+              ~type_body:begin
+                fun () pat ~ext_env ~ty_expected ~ty_infer:_
+                  ~contains_gadt:param_contains_gadt ->
+                  let { function_ = _, params, body;
+                        newtypes;
+                        params_contain_gadt = suffix_contains_gadt;
+                        split_history = inner_split_history;
+                      }
+                    =
+                    type_function ext_env expected_inner_mode ty_expected
+                      rest body_constraint body
+                      ~in_function ~param_index:(param_index+1)
+                  in
+                  let params_contain_gadt =
+                    param_contains_gadt || suffix_contains_gadt
+                  in
+                  (pat, params, body, newtypes, params_contain_gadt,
+                  inner_split_history, fp_kind pat)
+              end
+            |> function
+              (* The result must be a singleton because we passed a singleton
+                list above. *)
+            | [ result ], partial -> result, partial
+            | ([] | _ :: _ :: _), _ -> assert false
       in
       let split_history =
         Split_function_ty.append_to_history
@@ -6555,14 +6625,10 @@ and type_function
         Location.prerr_warning
           pat.pat_loc
           Warnings.Unerasable_optional_argument;
-      let fp_kind, fp_param =
+      let fp_param =
         match default_arg with
-        | None ->
-            let param = name_pattern "param" [ pat ] in
-            Tparam_pat pat, param
-        | Some (default_arg, arg_label, default_arg_sort) ->
-            let param = Ident.create_local ("*opt*" ^ arg_label) in
-            Tparam_optional_default (pat, default_arg, default_arg_sort), param
+        | None -> name_pattern "param" [ pat ]
+        | Some (_, arg_label, _) -> Ident.create_local ("*opt*" ^ arg_label)
       in
       let param =
         { fp_kind;
@@ -7898,6 +7964,7 @@ and type_let
   begin_def();
   if !Clflags.principal then begin_def ();
 
+  (* CR nroberts: probably need this? *)
   let is_fake_let =
     match spat_sexp_list with
     | [{pvb_expr={pexp_desc=Pexp_match(
