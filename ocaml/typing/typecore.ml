@@ -6513,6 +6513,8 @@ and type_function
             in
             let (pat_exp_list, new_env) =
               type_let With_attributes env Nonrecursive
+                (* CR nroberts: comment *)
+                ~check:(fun s -> Warnings.Unused_var_strict s)
                 [ { pvb_pat = pat;
                     pvb_expr = default_arg;
                     pvb_attributes = [];
@@ -6533,11 +6535,10 @@ and type_function
                   split_history = inner_split_history;
                 }
               =
-                type_function new_env expected_inner_mode ty_expected
+                type_function new_env expected_inner_mode ty_ret
                   rest body_constraint body
                   ~in_function ~param_index:(param_index+1)
             in
-            (* CR nroberts: need to call [map_half_typed_cases] here too... *)
             if may_contain_modules then begin
               end_def ();
               (match body with
@@ -6558,7 +6559,9 @@ and type_function
               match default_arg with
               | None -> fun pat -> Tparam_pat pat
               | Some (default_arg, _, default_arg_sort) ->
-                  (* CR nroberts: comment from before about legacy *)
+                  (* CR nroberts: comment from before about legacy.
+                     also probably need to check global mode above.
+                  *)
                   let default_arg =
                     type_expect env mode_legacy default_arg
                       (mk_expected ty_arg_internal_mono)
@@ -7964,7 +7967,6 @@ and type_let
   begin_def();
   if !Clflags.principal then begin_def ();
 
-  (* CR nroberts: probably need this? *)
   let is_fake_let =
     match spat_sexp_list with
     | [{pvb_expr={pexp_desc=Pexp_match(
