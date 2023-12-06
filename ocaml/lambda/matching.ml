@@ -2305,11 +2305,14 @@ let get_expr_args_record ~scopes head (arg, _mut, sort, layout) rem =
         | Record_inlined (_, Variant_extensible) ->
             Lprim (Pfield (lbl.lbl_pos + 1, ptr, sem), [ arg ], loc),
             lbl_sort, lbl_layout
-        | Record_abstract abs ->
-          begin
+        | Record_abstract { value_prefix_len; abstract_suffix } ->
+          if pos < value_prefix_len then
+            Lprim (Pfield (lbl.lbl_pos, ptr, sem), [ arg ], loc),
+            lbl_sort, lbl_layout
+          else begin
             (* TODO: could optimise to Alloc_local sometimes (only matters in
                the Float case) *)
-            match abs.(pos) with
+            match abstract_suffix.(pos - value_prefix_len) with
             | Imm ->
               Lprim (Pabstractfield (lbl.lbl_pos, Imm, sem, alloc_heap),
                      [ arg ], loc)

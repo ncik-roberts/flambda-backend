@@ -555,11 +555,14 @@ and transl_exp0 ~in_new_scope ~scopes sort e =
         | Record_inlined (_, Variant_extensible) ->
           Lprim (Pfield (lbl.lbl_pos + 1, maybe_pointer e, sem), [targ],
                  of_location ~scopes e.exp_loc)
-        | Record_abstract abs ->
+        | Record_abstract { value_prefix_len; abstract_suffix } ->
           let loc = of_location ~scopes e.exp_loc in
+          if lbl.lbl_num < value_prefix_len then
+            Lprim (Pfield (lbl.lbl_pos, maybe_pointer e, sem), [targ],
+                   of_location ~scopes e.exp_loc)
           (* alloc_mode is arbitrary for the non-float cases, as they don't
              allocate. *)
-          begin match abs.(lbl.lbl_num) with
+          else begin match abstract_suffix.(lbl.lbl_num - value_prefix_len) with
           | Imm ->
             Lprim (Pabstractfield (lbl.lbl_pos, Imm, sem, alloc_heap),
                    [targ], loc)
@@ -592,8 +595,10 @@ and transl_exp0 ~in_new_scope ~scopes sort e =
         | Record_ufloat -> Psetufloatfield (lbl.lbl_pos, mode)
         | Record_inlined (_, Variant_extensible) ->
           Psetfield (lbl.lbl_pos + 1, maybe_pointer newval, mode)
-        | Record_abstract abs -> begin
-          match abs.(lbl.lbl_num) with
+        | Record_abstract { value_prefix_len; abstract_suffix } -> begin
+          if lbl.lbl_num < value_prefix_len then
+            Psetfield(lbl.lbl_pos, maybe_pointer newval, mode)
+          else match abstract_suffix.(lbl.lbl_num - value_prefix_len) with
           | Imm -> Psetabstractfield(lbl.lbl_pos, Imm, mode)
           | Float -> Psetabstractfield (lbl.lbl_pos, Float, mode)
           | Float64 -> Psetabstractfield (lbl.lbl_pos, Float64, mode)
@@ -1532,10 +1537,13 @@ and transl_record ~scopes loc env mode fields repres opt_init_expr =
                        so it's simpler to leave it Alloc_heap *)
                     Pfloatfield (i, sem, alloc_heap)
                  | Record_ufloat -> Pufloatfield (i, sem)
-                 | Record_abstract abs -> begin
+                 | Record_abstract { value_prefix_len; abstract_suffix } ->
+                   if lbl.lbl_num < value_prefix_len then
+                     Pfield (i, maybe_pointer_type env typ, sem)
+                   else begin
                      (* alloc_mode: for floats, same as above. for others it's
                         unused. *)
-                     match abs.(lbl.lbl_num) with
+                     match abstract_suffix.(lbl.lbl_num - value_prefix_len) with
                      | Imm -> Pabstractfield (i, Imm, sem, alloc_heap)
                      | Float -> Pabstractfield (i, Float, sem, alloc_heap)
                      | Float64 -> Pabstractfield (i, Float64, sem, alloc_heap)
@@ -1630,8 +1638,11 @@ and transl_record ~scopes loc env mode fields repres opt_init_expr =
                 let pos = lbl.lbl_pos + 1 in
                 let ptr = maybe_pointer expr in
                 Psetfield(pos, ptr, Assignment modify_heap)
-            | Record_abstract abs -> begin
-                match abs.(lbl.lbl_num) with
+            | Record_abstract { value_prefix_len; abstract_suffix } -> begin
+                if lbl.lbl_num < value_prefix_len then
+                  let ptr = maybe_pointer expr in
+                  Psetfield(lbl.lbl_pos, ptr, Assignment modify_heap)
+                else match abstract_suffix.(lbl.lbl_num - value_prefix_len) with
                 | Imm ->
                   Psetabstractfield(lbl.lbl_pos, Imm, Assignment modify_heap)
                 | Float ->

@@ -1124,34 +1124,90 @@ let update_decl_jkind env dpath decl =
       let lbls, all_void = update_label_jkinds env loc lbls (Some jkinds) in
       let jkind = Jkind.for_boxed_record ~all_void in
 
-      (* Check for [Record_float], [Record_ufloat], and [Record_abstract], and
-         compute the [abstract_block_shape] for the latter case. *)
-      let abs = Array.init (Array.length jkinds) (fun _ -> Imm) in
       let element_reprs =
         { values = false; imms = false; floats = false; float64s = false }
       in
-      List.iteri
-        (fun i lbl ->
-           if is_float env lbl.Types.ld_type then begin
-             element_reprs.floats <- true;
-             abs.(i) <- Float
-           end else match Jkind.get_default_value jkinds.(i) with
-             | Value | Immediate64 ->
-               element_reprs.values <- true
-             | Immediate ->
-               element_reprs.imms <- true
-             | Float64 -> begin
-                 element_reprs.float64s <- true;
-                 abs.(i) <- Float64
-               end
-             | Void -> ()
-             | Any ->
-               Misc.fatal_error "Typedecl.update_record_kind: unexpected Any")
-        lbls;
+      (* Check for [Record_float], [Record_ufloat], and [Record_abstract], and
+         compute the [abstract_block_shape] for the latter case. *)
+      let rec scan_jkinds_and_compute_abstract_suffix
+          i
+          lbls
+          ~running_abstract_count
+          ~seen_non_value_with_runtime_component =
+        match lbls with
+        | [] ->
+            if seen_non_value_with_runtime_component then
+              Some (Array.init running_abstract_count (fun _ -> Imm))
+            else
+              None
+        | lbl :: lbls ->
+            let abstract_element, is_non_value_with_runtime_component =
+              if is_float env lbl.Types.ld_type then begin
+                element_reprs.floats <- true;
+                Some Float, false
+              end else match Jkind.get_default_value jkinds.(i) with
+                | Value | Immediate64 ->
+                    element_reprs.values <- true;
+                    None, false
+                | Immediate ->
+                    element_reprs.imms <- true;
+                    Some Imm, false
+                | Float64 -> begin
+                    element_reprs.float64s <- true;
+                    Some Float64, true
+                  end
+                | Void -> Some Imm, false (* has no runtime component *)
+                | Any ->
+                    Misc.fatal_error "Typedecl.update_record_kind: unexpected Any"
+            in
+            (* CR nroberts: different kind of error. *)
+            if seen_non_value_with_runtime_component
+            && Option.is_none abstract_element
+            then raise (Error (loc, Mixed_block));
+            match
+              scan_jkinds_and_compute_abstract_suffix (i + 1) lbls
+                ~seen_non_value_with_runtime_component:
+                  (seen_non_value_with_runtime_component ||
+                    is_non_value_with_runtime_component)
+                ~running_abstract_count:
+                  (if Option.is_some abstract_element then
+                     running_abstract_count + 1
+                   else 0)
+            with
+            | None -> None
+            | Some arr as some_arr ->
+                begin match abstract_element with
+                | None -> assert (running_abstract_count = 0)
+                | Some elem -> arr.(running_abstract_count) <- elem
+                end;
+                some_arr
+      in
+      let abstract_suffix =
+        scan_jkinds_and_compute_abstract_suffix 0 lbls
+          ~running_abstract_count:0
+          ~seen_non_value_with_runtime_component:false
+      in
       let rep =
         match element_reprs with
-        | { values = true ; imms = _    ; floats = _    ; float64s = true  } ->
-          raise (Error (loc, Mixed_block))
+        | { values = true ; imms = _    ; floats = _    ; float64s = true  }
+        | { values = _    ; imms = true ; floats = _    ; float64s = true  }
+        | { values = _    ; imms = _    ; floats = true ; float64s = true  } ->
+            (* CR nroberts: do this from some central place... *)
+            if Config.reserved_header_bits < 8 then
+              failwith "Need at least 8 reserved header bits to play this game.";
+            if Config.naked_pointers then
+              failwith "You won't get any useful information from testing this with naked pointers enabled.";
+            begin match abstract_suffix with
+            | Some abstract_suffix ->
+                let value_prefix_len =
+                  Array.length jkinds - Array.length abstract_suffix
+                in
+                Record_abstract { value_prefix_len; abstract_suffix }
+            | None ->
+                Misc.fatal_error
+                  "Typedecl.update_record_kind: expected abstract suffix for \
+                   mixed block"
+            end
         | { values = true ; imms = _    ; floats = _    ; float64s = false }
         | { values = _    ; imms = true ; floats = _    ; float64s = false } ->
           rep
@@ -1159,9 +1215,6 @@ let update_decl_jkind env dpath decl =
           Record_float
         | { values = false; imms = false; floats = false; float64s = true  } ->
           Record_ufloat
-        | { values = false; imms = true ; floats = _    ; float64s = true  }
-        | { values = false; imms = _    ; floats = true ; float64s = true  } ->
-          Record_abstract abs
         | { values = false; imms = false; floats = false; float64s = false } ->
           Misc.fatal_error "Typedecl.update_record_kind: empty record"
       in

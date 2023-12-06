@@ -5535,8 +5535,11 @@ and type_expect_
       let alloc_mode = match label.lbl_repres with
         (* projecting out of packed-float-record needs allocation *)
         | Record_float -> Some (register_allocation expected_mode)
-        | Record_abstract shape -> begin
-            match shape.(label.lbl_num) with
+        | Record_abstract { value_prefix_len; abstract_suffix } ->
+          if label.lbl_num < value_prefix_len then
+            None
+          else begin
+            match abstract_suffix.(label.lbl_num - value_prefix_len) with
             | Imm | Float64 -> None
             | Float -> Some (register_allocation expected_mode)
           end

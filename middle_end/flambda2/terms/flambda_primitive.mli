@@ -61,6 +61,8 @@ module Abstract_block_kind : sig
   val compare : t -> t -> int
 
   val element_kind : int -> t -> Flambda_kind.t
+
+  val length : t -> int
 end
 
 module Init_or_assign : sig

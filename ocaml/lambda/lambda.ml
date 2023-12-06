@@ -303,7 +303,10 @@ and block_shape =
   value_kind list option
 
 and abstract_element = Types.abstract_element = Imm | Float | Float64
-and abstract_block_shape = abstract_element array
+and abstract_block_shape = Types.abstract_block_shape =
+  { value_prefix_len : int;
+    abstract_suffix : abstract_element array;
+  }
 
 and array_kind =
     Pgenarray | Paddrarray | Pintarray | Pfloatarray

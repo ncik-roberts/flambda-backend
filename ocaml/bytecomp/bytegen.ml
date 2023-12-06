@@ -199,14 +199,15 @@ let rec size_of_lambda env = function
       | Record_unboxed | Record_inlined (_, Variant_unboxed) -> assert false
       | Record_float | Record_ufloat -> RHS_floatblock size
       | Record_inlined (_, Variant_extensible) -> RHS_block (size + 1)
-      | Record_abstract abs ->
+      | Record_abstract { value_prefix_len; abstract_suffix } ->
         let (imms, floats) =
           Array.fold_left (fun (imms, floats) shape ->
             match shape with
             | Imm -> (imms+1, floats)
             | Float | Float64 -> (imms, floats+1))
-            (0, 0) abs
+            (value_prefix_len, 0) abstract_suffix
         in
+        (* CR nroberts: rename [imms] to [values]. *)
         RHS_abstractblock { imms; floats }
       end
   | Llet(_str, _k, id, arg, body) ->
@@ -235,14 +236,17 @@ let rec size_of_lambda env = function
   | Lprim (Pmakearray (Pfloatarray, _, _), args, _)
   | Lprim (Pmakefloatblock _, args, _) ->
       RHS_floatblock (List.length args)
-  | Lprim (Pmakeabstractblock (_, abs, _), _, _) ->
+  | Lprim
+      (Pmakeabstractblock
+         (_, { value_prefix_len; abstract_suffix }, _), _, _) ->
       let (imms, floats) =
          Array.fold_left (fun (imms, floats) shape ->
            match shape with
            | Imm -> (imms+1, floats)
            | Float | Float64 -> (imms, floats+1))
-           (0, 0) abs
+           (value_prefix_len, 0) abstract_suffix
        in
+       (* CR nroberts: rename to [values] *)
        RHS_abstractblock { imms; floats }
   | Lprim (Pmakearray (Pgenarray, _, _), _, _) ->
      (* Pgenarray is excluded from recursive bindings by the

@@ -197,7 +197,10 @@ and boxed_integer = Primitive.boxed_integer =
 
 and abstract_element = Lambda.abstract_element =
     Imm | Float | Float64
-and abstract_block_shape = abstract_element array
+and abstract_block_shape = Lambda.abstract_block_shape =
+    { value_prefix_len : int;
+      abstract_suffix : abstract_element array;
+    }
 
 and vec128_type = Lambda.vec128_type =
   | Unknown128

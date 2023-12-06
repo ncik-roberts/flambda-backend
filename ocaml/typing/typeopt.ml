@@ -526,8 +526,11 @@ and value_kind_record env ~loc ~visited ~depth ~num_nodes_visited
               match rep with
               | Record_float | Record_ufloat ->
                 num_nodes_visited, Pfloatval
-              | Record_abstract abs -> begin
-                  match abs.(idx) with
+              | Record_abstract { value_prefix_len; abstract_suffix } ->
+                if idx < value_prefix_len then
+                  value_kind env ~loc ~visited ~depth ~num_nodes_visited
+                    label.ld_type
+                else begin match abstract_suffix.(idx - value_prefix_len) with
                   | Imm -> num_nodes_visited, Pintval
                   | Float | Float64 -> num_nodes_visited, Pfloatval
                 end

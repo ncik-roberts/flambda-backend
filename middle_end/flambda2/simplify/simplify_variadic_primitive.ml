@@ -155,7 +155,7 @@ let simplify_make_abstract_block ~original_prim ~kind
       ~(mutable_or_immutable : Mutability.t) _alloc_mode
       dacc ~original_term _dbg ~args_with_tys ~result_var =
   let args, _arg_tys = List.split args_with_tys in
-  if Array.length kind <> List.length args
+  if P.Abstract_block_kind.length kind <> List.length args
   then
     Misc.fatal_errorf
       "Shape in [Make_abstract_block] of different length from argument list:@ %a"

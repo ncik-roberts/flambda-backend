@@ -122,6 +122,7 @@ type block_type =
   | Normal of int
   (* tag *)
   | Flat_float_record
+  (* CR nroberts: rename [Abstract] to [Mixed]. *)
   | Abstract of Lambda.abstract_block_shape
 
 type block =
@@ -288,8 +289,9 @@ let rec prepare_letrec (recursive_set : Ident.Set.t)
         build_block cl (size + 1) (Normal 0) arg letrec
       | Record_float | Record_ufloat ->
         build_block cl size Flat_float_record arg letrec
-      | Record_abstract shape ->
-        build_block cl size (Abstract shape) arg letrec
+      | Record_abstract { value_prefix_len; abstract_suffix } ->
+        build_block cl size (Abstract { value_prefix_len; abstract_suffix })
+          arg letrec
       | Record_inlined (Extension _, _)
       | Record_inlined (Ordinary _, (Variant_unboxed | Variant_extensible))
       | Record_unboxed ->
@@ -572,21 +574,21 @@ let dissect_letrec ~bindings ~body ~free_vars_kind =
       let size : lambda = Lconst (Const_base (Const_int size)) in
       Lprim (Pccall desc, [size], Loc_unknown)
     in
-    let alloc_abstract_dummy shape =
-      let (imms, floats) =
-        Array.fold_left (fun (imms, floats) shape ->
+    let alloc_abstract_dummy ~value_prefix_len ~abstract_suffix =
+      let (values, floats) =
+        Array.fold_left (fun (values, floats) shape ->
           match shape with
-          | Imm -> (imms+1, floats)
-          | Float | Float64 -> (imms, floats+1))
-          (0, 0) shape
+          | Imm -> (values+1, floats)
+          | Float | Float64 -> (values, floats+1))
+          (value_prefix_len, 0) abstract_suffix
       in
-      let imms = Lconst (Const_base (Const_int imms)) in
+      let values = Lconst (Const_base (Const_int values)) in
       let floats = Lconst (Const_base (Const_int floats)) in
       let desc =
         Primitive.simple_on_values ~name:"caml_alloc_dummy_abstract" ~arity:2
           ~alloc:true
       in
-      Lprim (Pccall desc, [imms; floats], Loc_unknown)
+      Lprim (Pccall desc, [values; floats], Loc_unknown)
     in
     List.map
       (fun (id, { block_type; size }) ->
@@ -595,7 +597,8 @@ let dissect_letrec ~bindings ~body ~free_vars_kind =
            | Normal _tag -> alloc_normal_dummy "caml_alloc_dummy" size
            | Flat_float_record ->
              alloc_normal_dummy "caml_alloc_dummy_float" size
-           | Abstract shape -> alloc_abstract_dummy shape
+           | Abstract { value_prefix_len; abstract_suffix } ->
+               alloc_abstract_dummy ~value_prefix_len ~abstract_suffix
          in
          id, ccall)
       letrec.blocks

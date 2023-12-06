@@ -221,14 +221,18 @@ let rec expr_size env = function
       RHS_block (mode, List.length args)
   | Uprim(Pmakeufloatblock (_, mode), args, _) ->
       RHS_floatblock (mode, List.length args)
-  | Uprim(Pmakeabstractblock(_, shape, blockmode), _args, _) ->
+  | Uprim
+      (Pmakeabstractblock
+         (_, { value_prefix_len; abstract_suffix }, blockmode) ,
+       _args, _) ->
       let (imms, floats) =
         Array.fold_left (fun (imms, floats) shape ->
           match (shape : Lambda.abstract_element) with
           | Imm -> (imms+1, floats)
           | Float | Float64 -> (imms, floats+1))
-          (0, 0) shape
+          (value_prefix_len, 0) abstract_suffix
       in
+      (* CR nroberts: rename [imms] to [values]. *)
       RHS_abstractblock { imms; floats; blockmode }
   | Uprim(Pmakearray((Paddrarray | Pintarray), _, mode), args, _) ->
       RHS_block (mode, List.length args)
@@ -968,15 +972,22 @@ and transl_make_array dbg env kind mode args =
       make_float_alloc ~mode dbg Obj.double_array_tag
                       (List.map (transl_unbox_float dbg env) args)
 
-and transl_make_abstract_block dbg env (abs : abstract_block_shape)  mode args =
+and transl_make_abstract_block dbg env
+    ({ value_prefix_len; abstract_suffix } as abs : abstract_block_shape)
+    mode
+    args
+  =
   (* XXX layouts: double check that `Float` args will be boxed for all middle
      ends that use this file. *)
   make_abstract_alloc ~mode dbg abs
     (List.mapi (fun i arg ->
-       match abs.(i) with
-       | Imm | Float64 -> transl env arg
-       | Float -> transl_unbox_float dbg env arg)
-       args)
+       if i < value_prefix_len then
+         transl env arg
+       else
+         match abstract_suffix.(i - value_prefix_len) with
+         | Imm | Float64 -> transl env arg
+         | Float -> transl_unbox_float dbg env arg)
+     args)
 
 and transl_ccall env prim args dbg =
   let transl_arg native_repr arg =

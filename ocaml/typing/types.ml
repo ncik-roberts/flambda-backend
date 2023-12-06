@@ -262,7 +262,10 @@ and abstract_reason =
   | Abstract_rec_check_regularity
 
 and abstract_element = Imm | Float | Float64
-and abstract_block_shape = abstract_element array
+and abstract_block_shape =
+    { value_prefix_len : int;
+      abstract_suffix : abstract_element array;
+    }
 
 and record_representation =
   | Record_unboxed
@@ -575,8 +578,10 @@ let equal_record_representation r1 r2 = match r1, r2 with
       true
   | Record_ufloat, Record_ufloat ->
       true
-  | Record_abstract abs1, Record_abstract abs2 ->
-      Misc.Stdlib.Array.equal equal_abstract_element abs1 abs2
+  | Record_abstract { value_prefix_len = l1; abstract_suffix = abs1 },
+    Record_abstract { value_prefix_len = l2; abstract_suffix = abs2 }
+    [@warning "+9"] (* get alerted when we add another field *) ->
+      l1 = l2 && Misc.Stdlib.Array.equal equal_abstract_element abs1 abs2
   | (Record_unboxed | Record_inlined _ | Record_boxed _ | Record_float
     | Record_ufloat | Record_abstract _), _ ->
       false

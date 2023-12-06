@@ -103,12 +103,12 @@ module Abstract_block_kind = struct
     | Float -> Format.fprintf ppf "Float"
     | Float64 -> Format.fprintf ppf "Float64"
 
-  let print ppf t =
+  let print ppf ({ value_prefix_len; abstract_suffix } : t) =
     Format.fprintf ppf "[|@ ";
-    Array.iteri (fun i elem ->
-      print_abstract_block_element ppf elem;
-      if i <> Array.length t - 1 then Format.fprintf ppf ";@ "
-    ) t;
+    Format.fprintf ppf "Value (x%d);@ " value_prefix_len;
+    Array.iter (fun elem ->
+      Format.fprintf ppf "%a;@ " print_abstract_block_element elem)
+      abstract_suffix;
     Format.fprintf ppf "|]"
 
   let compare_abstract_element e1 e2 =
@@ -121,12 +121,27 @@ module Abstract_block_kind = struct
     | Imm, _ -> -1
     | _, Imm -> 1
 
-  let compare = Misc.Stdlib.Array.compare compare_abstract_element
+  let compare (t1 : t) (t2 : t) =
+    let components (t : t) =
+      let ({ value_prefix_len; abstract_suffix } [@warning "+9"]) : t = t in
+      value_prefix_len, abstract_suffix
+    in
+    let v1, a1 = components t1 in
+    let v2, a2 = components t2 in
+    match Int.compare v1 v2 with
+    | 0 -> Misc.Stdlib.Array.compare compare_abstract_element a1 a2
+    | cmp -> cmp
 
-  let element_kind i t =
-    Lambda.(match t.(i) with
-    | Imm -> K.value
-    | Float | Float64 -> K.naked_float)
+  let length ({ value_prefix_len; abstract_suffix } : t) =
+    value_prefix_len + Array.length abstract_suffix
+
+  let element_kind i ({ value_prefix_len; abstract_suffix } : t) =
+    if i < value_prefix_len then
+      K.value
+    else
+      Lambda.(match abstract_suffix.(i - value_prefix_len) with
+      | Imm -> K.value
+      | Float | Float64 -> K.naked_float)
 end
 
 
@@ -1733,7 +1748,7 @@ let args_kind_of_variadic_primitive p : arg_kinds =
   | Make_array (kind, _, _) ->
     Variadic_all_of_kind (Array_kind.element_kind_for_creation kind)
   | Make_abstract_block (kind, _, _) ->
-    Variadic (List.init (Array.length kind)
+    Variadic (List.init (Abstract_block_kind.length kind)
                 (fun i -> Abstract_block_kind.element_kind i kind))
 
 let result_kind_of_variadic_primitive p : result_kind =

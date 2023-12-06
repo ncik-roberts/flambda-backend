@@ -239,18 +239,22 @@ let abstract_element ppf : abstract_element -> unit = function
   | Float -> pp_print_string ppf "float"
   | Float64 -> pp_print_string ppf "float64"
 
-let abstract_block_shape ppf shape =
-  match Array.length shape with
+let abstract_block_shape ppf { value_prefix_len; abstract_suffix } =
+  begin match value_prefix_len with
+    | 0 -> ()
+    | n -> Format.fprintf ppf " (prefix=%d)" n
+  end;
+  match Array.length abstract_suffix with
   | 0 -> ()
   | 1 ->
-      Format.fprintf ppf " (%a)" abstract_element (shape.(0))
+      Format.fprintf ppf " (%a)" abstract_element (abstract_suffix.(0))
   | _ -> begin
     Array.iteri (fun i elt ->
       if i = 0 then
         Format.fprintf ppf " (%a" abstract_element elt
       else
         Format.fprintf ppf ",%a" abstract_element elt)
-      shape;
+      abstract_suffix;
     Format.fprintf ppf ")"
   end
 

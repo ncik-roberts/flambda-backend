@@ -756,12 +756,19 @@ let convert_lprim ~big_endian (prim : L.primitive) (args : Simple.t list list)
     let mode = Alloc_mode.For_allocations.from_lambda mode ~current_region in
     let mutability = Mutability.from_lambda mutability in
     [Variadic (Make_block (Naked_floats, mutability, mode), args)]
-  | Pmakeabstractblock (mutability, shape, mode), _ ->
+  | Pmakeabstractblock
+      ( mutability,
+        ({ value_prefix_len; abstract_suffix } as shape),
+        mode
+      ),
+    _ ->
     let args = List.flatten args in
     let args = List.mapi (fun i arg ->
-      match shape.(i) with
-      | Float -> unbox_float arg
-      | Float64 | Imm -> arg)
+      if i < value_prefix_len then
+        arg
+      else match abstract_suffix.(i - value_prefix_len) with
+        | Float -> unbox_float arg
+        | Float64 | Imm -> arg)
       args
     in
     let mode = Alloc_mode.For_allocations.from_lambda mode ~current_region in
