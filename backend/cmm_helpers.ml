@@ -86,8 +86,14 @@ let block_header ?(scannable_prefix = Scan_all) tag sz =
        mechanism? *)
     (* CR nroberts: how to check for bytecode vs. not? *)
     assert (Config.reserved_header_bits >= 8);
-    Nativeint.add hdr
-      (Nativeint.shift_left (Nativeint.of_int (scannable_prefix + 1)) 55)
+    let x =
+      Nativeint.add
+        (Nativeint.shift_left (Nativeint.of_int (scannable_prefix + 1)) 55)
+        hdr
+    in
+    if !Clflags.verbose
+    then Printf.printf "header = %s\n" (Nativeint.to_string x);
+    x
 
 (* Static data corresponding to "value"s must be marked black in case we are in
    no-naked-pointers mode. See [caml_darken] and the code below that emits
@@ -1234,6 +1240,7 @@ let make_alloc_generic ?(scannable_prefix = Scan_all) ~mode set_fn dbg tag
   then
     let hdr =
       match mode with
+      (* CR nroberts: test for locals? *)
       | Lambda.Alloc_local -> local_block_header ~scannable_prefix tag wordsize
       | Lambda.Alloc_heap -> block_header ~scannable_prefix tag wordsize
     in
@@ -1252,10 +1259,12 @@ let make_alloc_generic ?(scannable_prefix = Scan_all) ~mode set_fn dbg tag
       match Config.runtime5, scannable_prefix with
       | true, Scan_all -> "caml_alloc_shr_check_gc", [wordsize; tag]
       | false, Scan_all -> "caml_alloc", [wordsize; tag]
-      | true, Scan_prefix _ ->
-        Misc.fatal_error "mixed blocks not yet implemented for runtime 5"
-      | false, Scan_prefix prefix_len ->
-        "caml_alloc_mixed", [wordsize; tag; prefix_len]
+      | true, Scan_prefix prefix_len ->
+        "caml_alloc_mixed_shr_check_gc", [wordsize; tag; prefix_len]
+      | false, Scan_prefix _ ->
+        Misc.fatal_error
+          "mixed blocks not implemented for runtime 4. (It uses the PROFINFO \
+           configuration instead of HEADER_RESERVED_WORDS.)"
     in
     Clet
       ( VP.create id,

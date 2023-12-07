@@ -154,6 +154,9 @@ static value alloc_shared(caml_domain_state* d,
                                     reserved, 0 /* not pinned */);
   d->allocated_words += Whsize_wosize(wosize);
   if (mem == NULL) {
+    // CR nroberts: remove
+    printf("HEADER_RESERVED_BITS: %d\n", HEADER_RESERVED_BITS);
+    printf("wosize: %lu, tag: %u, reserved, %lu\n", wosize, tag, reserved);
     caml_fatal_error("allocation failure during minor GC");
   }
   return Val_hp(mem);

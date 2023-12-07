@@ -208,14 +208,19 @@ void caml_register_dyn_globals(void **globals, int nglobals) {
 }
 
 /* Logic to determine at which index within a global root to start
-   scanning.  [*glob_block] and [*start] may be updated by this function. */
-static void compute_index_for_global_root_scan(value* glob_block, int* start)
+   scanning.  [*glob_block], [*start], and [*stop] may be updated by this
+   function. */
+static void compute_index_for_global_root_scan(value* glob_block, int* start,
+                                               int* stop)
 {
   *start = 0;
 
   CAMLassert (Is_block(*glob_block));
 
   if (Tag_val(*glob_block) < No_scan_tag) {
+
+    *stop = Wosize_val(*glob_block);
+
     /* Note: if a [Closure_tag] block is registered as a global root
        (possibly containing one or more [Infix_tag] blocks), then only one
        out of the combined set of the [Closure_tag] and [Infix_tag] blocks
@@ -224,12 +229,18 @@ static void compute_index_for_global_root_scan(value* glob_block, int* start)
        cause a failure. */
     if (Tag_val(*glob_block) == Infix_tag)
       *glob_block -= Infix_offset_val(*glob_block);
-    if (Tag_val(*glob_block) == Closure_tag)
+    else if (Tag_val(*glob_block) == Closure_tag)
       *start = Start_env_closinfo(Closinfo_val(*glob_block));
+    else {
+      header_t succ_scannable = Reserved_hd(*glob_block);
+      if (succ_scannable > 0) {
+        *stop = succ_scannable - 1;
+      }
+    }
   }
   else {
     /* Set the index such that none of the block's fields will be scanned. */
-    *start = Wosize_val(*glob_block);
+    *stop = 0;
   }
 }
 
@@ -239,7 +250,7 @@ static void scan_native_globals(scanning_action f, void* fdata)
   static link* dyn_globals;
   value* glob;
   value glob_block;
-  int start;
+  int start, stop;
   link* lnk;
 
   caml_plat_lock(&roots_mutex);
@@ -250,8 +261,8 @@ static void scan_native_globals(scanning_action f, void* fdata)
   for (i = 0; caml_globals[i] != 0; i++) {
     for(glob = caml_globals[i]; *glob != 0; glob++) {
       glob_block = *glob;
-      compute_index_for_global_root_scan(&glob_block, &start);
-      for (j = start; j < Wosize_val(glob_block); j++) {
+      compute_index_for_global_root_scan(&glob_block, &start, &stop);
+      for (j = start; j < stop; j++) {
         f(fdata, Field(glob_block, j), &Field(glob_block, j));
       }
     }
@@ -261,8 +272,8 @@ static void scan_native_globals(scanning_action f, void* fdata)
   iter_list(dyn_globals, lnk) {
     for(glob = (value *) lnk->data; *glob != 0; glob++) {
       glob_block = *glob;
-      compute_index_for_global_root_scan(&glob_block, &start);
-      for (j = start; j < Wosize_val(glob_block); j++) {
+      compute_index_for_global_root_scan(&glob_block, &start, &stop);
+      for (j = start; j < stop; j++) {
         f(fdata, Field(glob_block, j), &Field(glob_block, j));
       }
     }
