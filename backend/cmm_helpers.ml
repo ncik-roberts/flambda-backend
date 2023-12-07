@@ -85,14 +85,15 @@ let block_header ?(scannable_prefix = Scan_all) tag sz =
     (* CR nroberts: 8 should be constant somewhere. Different configuration
        mechanism? *)
     (* CR nroberts: how to check for bytecode vs. not? *)
+    (* CR nroberts: need to check with mark about GC bit *)
     assert (Config.reserved_header_bits >= 8);
     let x =
       Nativeint.add
-        (Nativeint.shift_left (Nativeint.of_int (scannable_prefix + 1)) 55)
+        (Nativeint.shift_left (Nativeint.of_int (scannable_prefix + 1)) 56)
         hdr
     in
     if !Clflags.verbose
-    then Printf.printf "header = %s\n" (Nativeint.to_string x);
+    then Printf.printf "header = 0x%x\n" (Nativeint.to_int x);
     x
 
 (* Static data corresponding to "value"s must be marked black in case we are in

@@ -1137,7 +1137,7 @@ let update_decl_jkind env dpath decl =
         match lbls with
         | [] ->
             if seen_non_value_with_runtime_component then
-              Some (Array.init running_abstract_count (fun _ -> Imm))
+              Some (Array.init running_abstract_count (fun _ -> Imm), false)
             else
               None
         | lbl :: lbls ->
@@ -1175,12 +1175,13 @@ let update_decl_jkind env dpath decl =
                    else 0)
             with
             | None -> None
-            | Some arr as some_arr ->
-                begin match abstract_element with
-                | None -> assert (running_abstract_count = 0)
-                | Some elem -> arr.(running_abstract_count) <- elem
-                end;
-                some_arr
+            | Some (arr, done_) as some ->
+                if done_ then some
+                else match abstract_element with
+                  | None -> Some (arr, true)
+                  | Some elem ->
+                      arr.(running_abstract_count) <- elem;
+                      some
       in
       let abstract_suffix =
         scan_jkinds_and_compute_abstract_suffix 0 lbls
@@ -1198,10 +1199,14 @@ let update_decl_jkind env dpath decl =
             if Config.naked_pointers then
               failwith "You won't get any useful information from testing this with naked pointers enabled.";
             begin match abstract_suffix with
-            | Some abstract_suffix ->
+            | Some (abstract_suffix, done_) ->
                 let value_prefix_len =
                   Array.length jkinds - Array.length abstract_suffix
                 in
+                if not done_ && value_prefix_len <> 0 then
+                  fatal_error
+                    "Expected [done_] flag to be [true] if there is a scanned \
+                     prefix.";
                 Record_abstract { value_prefix_len; abstract_suffix }
             | None ->
                 Misc.fatal_error
