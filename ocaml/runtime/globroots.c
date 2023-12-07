@@ -225,11 +225,10 @@ static void compute_index_for_global_root_scan(value* glob_block, int* start,
        may be registered as a global root.  Multiple registrations can cause
        the compactor to traverse the same fields of a block twice, which can
        cause a failure. */
-    if (Tag_val(*glob_block) == Infix_tag) {
+    if (Tag_val(*glob_block) == Infix_tag)
       *glob_block -= Infix_offset_val(*glob_block);
-      *stop = Wosize_val(*glob_block);
-    }
-    else if (Tag_val(*glob_block) == Closure_tag) {
+
+    if (Tag_val(*glob_block) == Closure_tag) {
       *start = Start_env_closinfo(Closinfo_val(*glob_block));
       *stop = Wosize_val(*glob_block);
     }
