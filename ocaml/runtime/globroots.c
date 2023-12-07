@@ -219,22 +219,26 @@ static void compute_index_for_global_root_scan(value* glob_block, int* start,
 
   if (Tag_val(*glob_block) < No_scan_tag) {
 
-    *stop = Wosize_val(*glob_block);
-
     /* Note: if a [Closure_tag] block is registered as a global root
        (possibly containing one or more [Infix_tag] blocks), then only one
        out of the combined set of the [Closure_tag] and [Infix_tag] blocks
        may be registered as a global root.  Multiple registrations can cause
        the compactor to traverse the same fields of a block twice, which can
        cause a failure. */
-    if (Tag_val(*glob_block) == Infix_tag)
+    if (Tag_val(*glob_block) == Infix_tag) {
       *glob_block -= Infix_offset_val(*glob_block);
-    else if (Tag_val(*glob_block) == Closure_tag)
+      *stop = Wosize_val(*glob_block);
+    }
+    else if (Tag_val(*glob_block) == Closure_tag) {
       *start = Start_env_closinfo(Closinfo_val(*glob_block));
+      *stop = Wosize_val(*glob_block);
+    }
     else {
-      header_t succ_scannable = Reserved_hd(*glob_block);
+      header_t succ_scannable = Reserved_val(*glob_block);
       if (succ_scannable > 0) {
         *stop = succ_scannable - 1;
+      } else {
+        *stop = Wosize_val(*glob_block);
       }
     }
   }
