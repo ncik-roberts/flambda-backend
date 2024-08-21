@@ -2283,9 +2283,9 @@ and unboxed_constant _ctxt f (x : Jane_syntax.Layouts.constant)
 and function_param ctxt f { pparam_desc; pparam_loc = _ } =
   match pparam_desc with
   | Pparam_val (a, b, c) -> label_exp ctxt f (a, b, c)
-  | Pparam_newtype (ty, None) -> pp f "(type %s)" ty.txt
+  | Pparam_newtype (ty, None) -> pp f "(type %a)" ident_of_name ty.txt
   | Pparam_newtype (ty, Some annot) ->
-      pp f "(type %s : %a)" ty.txt (jkind_annotation ctxt) annot
+      pp f "(type %a : %a)" ident_of_name ty.txt (jkind_annotation ctxt) annot
 
 and function_body ctxt f x =
   match x with
