@@ -69,6 +69,10 @@ type t =
   | Scan_all
   | Scan_prefix of int
 
+(* CR nroberts: comment *)
+let reserved_header_shift = 10
+let wosize_shift = reserved_header_shift + Config.reserved_header_bits
+
 module Mixed_block_support : sig
   val assert_mixed_block_support : unit -> unit
 
@@ -87,10 +91,6 @@ end = struct
      the prefix. But the all-0 prefix means "not a mixed block", so we can't use
      the all-0 pattern, and we must subtract 2 instead. *)
   let max_scannable_prefix = (1 lsl required_reserved_header_bits) - 2
-
-  let max_header =
-    (1 lsl (required_addr_size_bits - required_reserved_header_bits)) - 1
-    |> Nativeint.of_int
 
   let assert_mixed_block_support =
     lazy
@@ -120,26 +120,19 @@ end = struct
     then
       Misc.fatal_errorf "Scannable prefix too big (%d > %d)" scannable_prefix
         max_scannable_prefix;
-    (* This means we crash the compiler if someone tries to write a mixed record
-       with too many fields, but you effectively can't: you'd need something
-       like 2^46 fields. *)
-    if header > max_header
-    then
-      Misc.fatal_errorf
-        "Header too big for the mixed block encoding to be added (%nd > %nd)"
-        header max_header;
     Nativeint.add
       (Nativeint.shift_left
          (Nativeint.of_int (scannable_prefix + 1))
-         (required_addr_size_bits - required_reserved_header_bits))
+         reserved_header_shift)
       header
 end
 
 (* CR mshinwell: update to use NOT_MARKABLE terminology *)
 let block_header ?(scannable_prefix = Scan_all) tag sz =
+  (* CR nroberts: check that size doesn't go off the end *)
   let hdr =
     Nativeint.add
-      (Nativeint.shift_left (Nativeint.of_int sz) 10)
+      (Nativeint.shift_left (Nativeint.of_int sz) wosize_shift)
       (Nativeint.of_int tag)
   in
   match scannable_prefix with
@@ -908,13 +901,6 @@ let get_header ptr dbg =
       [Cop (Cadda, [ptr; Cconst_int (-size_int, dbg)], dbg)],
       dbg )
 
-let get_header_masked ptr dbg =
-  if Config.reserved_header_bits > 0
-  then
-    let header_mask = (1 lsl (64 - Config.reserved_header_bits)) - 1 in
-    Cop (Cand, [get_header ptr dbg; Cconst_int (header_mask, dbg)], dbg)
-  else get_header ptr dbg
-
 let tag_offset = if big_endian then -1 else -size_int
 
 let get_tag ptr dbg =
@@ -933,7 +919,7 @@ let get_tag ptr dbg =
         dbg )
 
 let get_size ptr dbg =
-  Cop (Clsr, [get_header_masked ptr dbg; Cconst_int (10, dbg)], dbg)
+  Cop (Clsr, [get_header ptr dbg; Cconst_int (wosize_shift, dbg)], dbg)
 
 (* Array indexing *)
 
@@ -941,9 +927,10 @@ let log2_size_addr = Misc.log2 size_addr
 
 let log2_size_float = Misc.log2 size_float
 
-let wordsize_shift = 9
+(* CR nroberts: what da heck *)
+let wordsize_shift = wosize_shift - 1
 
-let numfloat_shift = 9 + log2_size_float - log2_size_addr
+let numfloat_shift = wordsize_shift + log2_size_float - log2_size_addr
 
 let is_addr_array_hdr hdr dbg =
   Cop
@@ -3132,7 +3119,7 @@ let raise_prim raise_kind arg dbg =
 let negint arg dbg = Cop (Csubi, [Cconst_int (2, dbg); arg], dbg)
 
 let arraylength kind arg dbg =
-  let hdr = get_header_masked arg dbg in
+  let hdr = get_header arg dbg in
   match (kind : Lambda.array_kind) with
   | Pgenarray ->
     let len =
