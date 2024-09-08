@@ -629,7 +629,7 @@ Caml_inline void extern_header(struct caml_extern_state* s,
   if (tag < 16 && sz < 8) {
     writebyte(s, PREFIX_SMALL_BLOCK + tag + (sz << 4));
   } else {
-    header_t hd = Make_header(sz, tag, NOT_MARKABLE);
+    header_t hd = (sz << 10) + tag;
 #ifdef ARCH_SIXTYFOUR
     if (sz > 0x3FFFFF && (s->extern_flags & COMPAT_32))
       extern_failwith(s, "output_value: array cannot be read back on "
